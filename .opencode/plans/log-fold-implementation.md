@@ -3,26 +3,31 @@
 ## Goal
 
 Build `@hugojosefson/log-fold` — a runtime-agnostic library (Deno, Node.js, Bun)
-that renders a "docker buildx"-style collapsing task tree to the terminal. Tasks
-collapse to a single line when complete; running tasks expand to show sub-tasks
-and a tail window of subprocess output. Multiple tasks can run concurrently. On
-error, the full log is dumped.
+that renders a collapsing task tree to any output stream (stdout, stderr, etc.).
+Inspired by Docker Buildkit's progress display. Tasks collapse to a single line
+when complete; running tasks expand to show sub-tasks and a tail window of
+subprocess output. Multiple tasks can run concurrently. On error, the full log
+is dumped.
+
+Intended for CLI tools, build systems, deployment scripts, and any program that
+wants structured progress output. Not limited to build/CI — any workflow with
+nested units of work benefits.
 
 ## Design decisions (confirmed)
 
-| Decision               | Choice                                                                                                                                                                    |
-| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| API style              | AsyncLocalStorage-based implicit context (primary) + explicit context passing (backup) + imperative begin/end                                                             |
-| Log tail               | Keep full log buffer, display last N lines in tail window. Print full log on error                                                                                        |
-| VT100 emulation        | Skip for now; design the log buffer so a VT100 parser can plug in later                                                                                                   |
-| Subprocess integration | Accept log lines as core API; optional convenience wrapper using `node:child_process`                                                                                     |
-| Runtime                | Runtime-agnostic via `node:` built-in modules (`node:tty`, `node:process`, `node:async_hooks`, `node:child_process`). No Deno-specific APIs                               |
-| Dependencies           | `@std/fmt/colors` + `node:` built-ins (zero fetched deps)                                                                                                                 |
-| Terminal control       | `node:tty` `WriteStream` methods (`cursorTo`, `moveCursor`, `clearLine`, `clearScreenDown`) instead of hand-written ANSI escapes. Only cursor hide/show requires raw ANSI |
-| Unicode                | Unicode symbols only (`✓`, `✗`, `⏳`, `│`), no ASCII fallback                                                                                                             |
-| Colors                 | Buildkit-style: cyan for completed, red for errors                                                                                                                        |
-| Exports                | Submodule exports in `deno.jsonc`                                                                                                                                         |
-| Concurrency            | Support multiple children running simultaneously under one parent                                                                                                         |
+| Decision               | Choice                                                                                                                                                                                                                           |
+| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| API style              | AsyncLocalStorage-based implicit context (primary) + explicit context passing (backup) + imperative begin/end. First `logTask()` auto-inits; `withLogFold()` optional for custom config                                          |
+| Log tail               | Keep full log buffer, display last N lines in tail window. Print full log on error                                                                                                                                               |
+| VT100 emulation        | Skip for now; design the log buffer so a VT100 parser can plug in later                                                                                                                                                          |
+| Subprocess integration | `logFromStream()` accepts Node.js `Readable`, web `ReadableStream`, arrays, or `{ stdout, stderr }` objects (covers `node:child_process`, `Deno.Command`, `Bun.spawn`). `runCommand()` wraps `node:child_process` as convenience |
+| Runtime                | Runtime-agnostic via `node:` built-in modules (`node:tty`, `node:process`, `node:async_hooks`, `node:child_process`). No Deno-specific APIs                                                                                      |
+| Dependencies           | `@std/fmt/colors` + `node:` built-ins (zero fetched deps)                                                                                                                                                                        |
+| Terminal control       | `node:tty` `WriteStream` methods (`cursorTo`, `moveCursor`, `clearLine`, `clearScreenDown`) instead of hand-written ANSI escapes. Only cursor hide/show requires raw ANSI                                                        |
+| Unicode                | Unicode symbols only (`✓`, `✗`, `⏳`, `│`), no ASCII fallback                                                                                                                                                                    |
+| Colors                 | Buildkit-style: cyan for completed, red for errors                                                                                                                                                                               |
+| Exports                | Submodule exports in `deno.jsonc`                                                                                                                                                                                                |
+| Concurrency            | Support multiple children running simultaneously under one parent                                                                                                                                                                |
 
 ## Architecture
 
@@ -116,49 +121,92 @@ interface ContextStore {
 const storage = new AsyncLocalStorage<ContextStore>();
 ```
 
-Module-level convenience functions that read from the ALS store:
+Module-level convenience functions that read from the AsyncLocalStorage store:
 
 ```typescript
 /**
- * Create and run a sub-task under the current context.
- * If called outside any run() context, throws.
+ * Create and run a task. If called inside an existing task, nests as a child.
+ * If called at the top level (no active context), auto-initializes a LogFold
+ * session with default options — the renderer starts when this task starts
+ * and stops when this task completes.
  */
-export async function task(
+export async function logTask(
   title: string,
   fn: (ctx: TaskContext) => Promise<void>,
 ): Promise<void>;
 
 /**
  * Append a log line to the current task.
- * If called outside any run() context, no-op (silent discard).
+ * If called outside any task context, no-op (silent discard).
  */
 export function log(line: string): void;
 
 /**
  * Append multiple log lines to the current task.
- * If called outside any run() context, no-op (silent discard).
+ * If called outside any task context, no-op (silent discard).
  */
 export function logLines(text: string): void;
+
+/**
+ * Optional wrapper for custom LogFold options (tailLines, mode, output, etc).
+ * Sets up a rendering session; any logTask() calls inside use this session.
+ * Most users don't need this — the first logTask() auto-inits with defaults.
+ */
+export async function withLogFold(
+  options: LogFoldOptions,
+  fn: () => Promise<void>,
+): Promise<void>;
 ```
 
 Design choices for "outside context" behavior:
 
-| Function     | Outside context                                                                                  |
-| :----------- | :----------------------------------------------------------------------------------------------- |
-| `task()`     | Throws — creating a task with no parent is a programming error                                   |
-| `log()`      | No-op — allows library code to sprinkle `log()` calls without forcing callers to set up log-fold |
-| `logLines()` | No-op — same rationale as `log()`                                                                |
+| Function        | Outside context                                                                                  |
+| :-------------- | :----------------------------------------------------------------------------------------------- |
+| `logTask()`     | Auto-inits a LogFold session with defaults. This task becomes a root task                        |
+| `log()`         | No-op — allows library code to sprinkle `log()` calls without forcing callers to set up log-fold |
+| `logLines()`    | No-op — same rationale as `log()`                                                                |
+| `withLogFold()` | Sets up a session with custom options. `logTask()` calls inside nest under it                    |
 
-`task()` pushes a new `ContextStore` into ALS before calling `fn()`, so any
-nested `task()`/`log()` calls inside `fn()` auto-nest correctly. This is the key
-mechanism for auto-detecting call hierarchy:
+`logTask()` pushes a new `ContextStore` into AsyncLocalStorage before calling
+`fn()`, so any nested `logTask()`/`log()` calls inside `fn()` auto-nest
+correctly. This is the key mechanism for auto-detecting call hierarchy:
 
 ```typescript
-export async function task(title, fn) {
-  const store = storage.getStore();
-  if (!store) throw new Error("task() called outside of run()");
-  const { logFold, node: parent } = store;
+import { LogFold } from "./log-fold.ts";
+import {
+  createTaskNode,
+  failTask,
+  startTask,
+  succeedTask,
+} from "./task-node.ts";
 
+export async function logTask(title, fn) {
+  const store = storage.getStore();
+
+  if (!store) {
+    // Top-level call — auto-init a LogFold session with defaults
+    const logFold = new LogFold();
+    const root = createTaskNode(title);
+    logFold.roots.push(root);
+    startTask(root);
+    logFold.renderer.start(logFold.roots);
+    logFold.renderer.onTaskStart(root);
+
+    try {
+      await storage.run({ logFold, node: root }, () => fn(rootCtx));
+      succeedTask(root);
+    } catch (e) {
+      failTask(root, e instanceof Error ? e : new Error(String(e)));
+      throw e;
+    } finally {
+      logFold.renderer.onTaskEnd(root);
+      logFold.renderer.stop();
+    }
+    return;
+  }
+
+  // Nested call — create child under current context
+  const { logFold, node: parent } = store;
   const child = createTaskNode(title, parent);
   startTask(child);
   logFold.renderer.onTaskStart(child);
@@ -177,46 +225,48 @@ export async function task(title, fn) {
 
 #### DX comparison — use cases
 
-**Use case 1 — simple sequential script (ALS)**
+**Use case 1 — simple sequential script (AsyncLocalStorage)**
 
 ```typescript
-import { log, run, task } from "@hugojosefson/log-fold";
+import { log, logTask } from "@hugojosefson/log-fold";
 
-await run(async () => {
-  await task("Install", async () => {
+await logTask("Build", async () => {
+  await logTask("Install", async () => {
     log("npm install...");
     await install();
   });
-  await task("Build", async () => {
+  await logTask("Compile", async () => {
     log("tsc --build");
   });
 });
 ```
 
-No context objects passed anywhere. `install()` could itself call `task()` and
-`log()` and everything auto-nests.
+No `withLogFold()` needed — the outer `logTask("Build")` auto-initializes the
+rendering session. No context objects passed anywhere. `install()` could itself
+call `logTask()` and `log()` and everything auto-nests.
 
-**Use case 2 — deep nesting across module boundaries (ALS)**
+**Use case 2 — deep nesting across module boundaries (AsyncLocalStorage)**
 
 ```typescript
 // build.ts
-import { log, task } from "@hugojosefson/log-fold";
+import { log, logTask } from "@hugojosefson/log-fold";
+import { compileFiles } from "./compile.ts";
 
 export async function build() {
-  await task("Compile", async () => {
+  await logTask("Compile", async () => {
     log("compiling...");
     await compileFiles(); // auto-nests under "Compile"
   });
 }
 
 // compile.ts — only imports log-fold, no context threading
-import { log, task } from "@hugojosefson/log-fold";
+import { log, logTask } from "@hugojosefson/log-fold";
 
 export async function compileFiles() {
-  await task("Parse", async () => {
+  await logTask("Parse", async () => {
     log("parsing...");
   });
-  await task("Emit", async () => {
+  await logTask("Emit", async () => {
     log("emitting...");
   });
 }
@@ -225,16 +275,18 @@ export async function compileFiles() {
 **Use case 3 — concurrent tasks**
 
 ```typescript
-import { log, run, task } from "@hugojosefson/log-fold";
+import { log, logTask } from "@hugojosefson/log-fold";
 
-await run(async () => {
-  await task("Install", async () => {/* ... */});
+await logTask("CI", async () => {
+  await logTask("Install", async () => {
+    /* ... */
+  });
 
   await Promise.all([
-    task("Compile", async () => {
+    logTask("Compile", async () => {
       log("tsc --build");
     }),
-    task("Lint", async () => {
+    logTask("Lint", async () => {
       log("eslint src/");
     }),
   ]);
@@ -259,7 +311,7 @@ export async function migrate() {
 
 **Use case 5 — explicit context passing (backup API)**
 
-For testing, or when ALS doesn't suit the use case:
+For testing, or when AsyncLocalStorage doesn't suit the use case:
 
 ```typescript
 import { LogFold } from "@hugojosefson/log-fold";
@@ -282,56 +334,63 @@ import { LogFold } from "@hugojosefson/log-fold";
 
 const lf = new LogFold();
 lf.start();
+try {
+  const server = lf.begin("Server");
+  server.log("listening on :8080");
 
-const server = lf.begin("Server");
-server.log("listening on :8080");
+  // Later, in an event handler:
+  const req = server.begin("Request /api/users");
+  try {
+    req.log("processing...");
+    // ... do work ...
+    req.succeed();
+  } catch (e) {
+    req.fail(e instanceof Error ? e : new Error(String(e)));
+  }
 
-// Later, in an event handler:
-const req = server.begin("Request /api/users");
-req.log("processing...");
-req.succeed();
-
-// Eventually:
-server.succeed();
-lf.stop();
+  // Eventually:
+  server.succeed();
+} finally {
+  lf.stop();
+}
 ```
 
-**Use case 7 — subprocess with auto-nesting (ALS + runCommand)**
+**Use case 7 — subprocess with auto-nesting (AsyncLocalStorage + runCommand)**
 
 ```typescript
-import { run, task } from "@hugojosefson/log-fold";
+import { logTask } from "@hugojosefson/log-fold";
 import { runCommand } from "@hugojosefson/log-fold/run-command";
 
-await run(async () => {
-  await task("Build", async () => {
-    await runCommand("npm install", ["npm", "install"]);
-    // runCommand internally calls task() — auto-nests under "Build"
-    await runCommand("tsc", ["npx", "tsc", "--build"]);
-  });
+await logTask("Build", async () => {
+  await runCommand("npm install", ["npm", "install"]);
+  // runCommand internally calls logTask() — auto-nests under "Build"
+  await runCommand("tsc", ["npx", "tsc", "--build"]);
 });
 ```
 
 **Use case 8 — error with full log dump**
 
 ```typescript
-await run(async () => {
-  await task("Build", async () => {
-    log("step 1...");
-    log("step 2...");
-    // ... 200 more log lines ...
-    throw new Error("compilation failed");
-    // → "Build" marked as fail
-    // → on stop(), all 202 lines dumped to output
-    // → error propagates to run(), which stops renderer then rethrows
-  });
+import { log, logTask } from "@hugojosefson/log-fold";
+
+await logTask("Build", async () => {
+  log("step 1...");
+  log("step 2...");
+  // ... 200 more log lines ...
+  throw new Error("compilation failed");
+  // → "Build" marked as fail
+  // → renderer stops, all 202 lines dumped to output
+  // → error propagates to caller
 });
 ```
 
 **Use case 9 — wrapping third-party code**
 
 ```typescript
-await run(async () => {
-  await task("Database migration", async () => {
+import { logTask } from "@hugojosefson/log-fold";
+
+await logTask("Deploy", async () => {
+  await logTask("Database migration", async () => {
     // Third-party code doesn't call log() — that's fine.
     // Task shows as running with a timer, no log tail.
     await thirdPartyMigrate();
@@ -339,12 +398,38 @@ await run(async () => {
 });
 ```
 
-**Use case 10 — mixed ALS and explicit in the same tree**
+**Use case 10 — custom config via withLogFold**
 
-Both APIs share the same underlying `LogFold` instance and task tree. You can
-mix them:
+Use `withLogFold()` when you need non-default renderer options:
 
 ```typescript
+import { log, logTask, withLogFold } from "@hugojosefson/log-fold";
+
+await withLogFold(
+  { tailLines: 10, headerText: "Deploying" },
+  async () => {
+    await logTask("Upload assets", async () => {
+      log("uploading...");
+    });
+    await logTask("Invalidate cache", async () => {
+      log("invalidating...");
+    });
+  },
+);
+```
+
+Without `withLogFold()`, the first `logTask()` auto-initializes with defaults.
+`withLogFold()` is only needed for custom `tailLines`, `mode`, `output`,
+`headerText`, etc.
+
+**Use case 11 — mixed AsyncLocalStorage and explicit in the same tree**
+
+Both APIs share the same underlying `LogFold` instance and task tree:
+
+```typescript
+import { log, logTask } from "@hugojosefson/log-fold";
+import { LogFold } from "@hugojosefson/log-fold";
+
 const lf = new LogFold();
 await lf.run(async (root) => {
   // Explicit context
@@ -352,16 +437,93 @@ await lf.run(async (root) => {
     t.log("explicit...");
   });
 
-  // ALS — works because run() sets up the ALS store
-  await task("Step 2", async () => {
+  // AsyncLocalStorage — works because run() sets up the AsyncLocalStorage store
+  await logTask("Step 2", async () => {
     log("implicit...");
   });
 });
 ```
 
 This works because `lf.run()` both passes the explicit `root` context AND sets
-up the ALS store. The module-level `task()` reads from ALS; `root.task()` uses
-the explicit reference. Both create nodes in the same tree.
+up the AsyncLocalStorage store. The module-level `logTask()` reads from
+AsyncLocalStorage; `root.task()` uses the explicit reference. Both create nodes
+in the same tree.
+
+**Use case 12 — BYO subprocess with `logFromStream` (Node.js `child_process`)**
+
+When you already have your own `ChildProcess` and want to pipe its output into a
+log-fold task, use `logFromStream()`. It accepts the child process object
+directly — it picks up `.stdout` and `.stderr` automatically:
+
+```typescript
+import { spawn } from "node:child_process";
+import { logTask } from "@hugojosefson/log-fold";
+import { logFromStream } from "@hugojosefson/log-fold/run-command";
+
+await logTask("My process", async () => {
+  const child = spawn("my-tool", ["--flag"]);
+  await logFromStream(child);
+});
+```
+
+**Use case 13 — BYO subprocess with `logFromStream` (Deno `Command`)**
+
+```typescript
+import { logTask } from "@hugojosefson/log-fold";
+import { logFromStream } from "@hugojosefson/log-fold/run-command";
+
+await logTask("Build", async () => {
+  const child = new Deno.Command("npm", {
+    args: ["install"],
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+  await logFromStream(child);
+});
+```
+
+**Use case 14 — BYO subprocess with `logFromStream` (Bun `spawn`)**
+
+```typescript
+import { logTask } from "@hugojosefson/log-fold";
+import { logFromStream } from "@hugojosefson/log-fold/run-command";
+
+await logTask("Build", async () => {
+  const child = Bun.spawn(["npm", "install"]);
+  await logFromStream(child);
+});
+```
+
+**Use case 15 — piping a fetch response body**
+
+`logFromStream()` also accepts a single `ReadableStream`:
+
+```typescript
+import { logTask } from "@hugojosefson/log-fold";
+import { logFromStream } from "@hugojosefson/log-fold/run-command";
+
+await logTask("Fetch logs", async () => {
+  const response = await fetch("https://example.com/logs");
+  await logFromStream(response.body!);
+});
+```
+
+**Use case 16 — manual stream wiring (no `logFromStream`)**
+
+For full control, you can wire streams yourself using `log()` directly:
+
+```typescript
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import { log, logTask } from "@hugojosefson/log-fold";
+
+await logTask("My process", async () => {
+  const child = spawn("my-tool", ["--flag"]);
+  const rl = createInterface({ input: child.stdout! });
+  rl.on("line", (line) => log(line));
+  await new Promise((resolve) => child.on("close", resolve));
+});
+```
 
 ### Layer 4: `src/renderer.ts` — rendering
 
@@ -550,11 +712,15 @@ interface LogFoldOptions {
 }
 ```
 
-#### `run()` method — the primary entry point
+#### `run()` method — explicit context entry point
 
-Used by both the ALS convenience functions and the explicit context API.
+Used by the explicit context API and internally by `withLogFold()`.
 
 ```typescript
+import { storage } from "./context.ts";
+import { createRenderer } from "./renderer.ts";
+import type { TaskContext } from "./log-fold.ts";
+
 class LogFold {
   async run(fn: (root: TaskContext) => Promise<void>): Promise<void> {
     const renderer = createRenderer(this.options);
@@ -563,7 +729,7 @@ class LogFold {
     const rootCtx = new TaskContextImpl(/*implicit root*/, this, renderer);
 
     try {
-      // Set up ALS so module-level task()/log() work inside fn()
+      // Set up AsyncLocalStorage so module-level logTask()/log() work inside fn()
       await storage.run(
         { logFold: this, node: rootCtx.node },
         () => fn(rootCtx),
@@ -590,9 +756,9 @@ interface TaskContext {
 }
 ```
 
-`task()` creates a child node, starts it, runs `fn` inside a new ALS scope (so
-module-level functions also work inside explicit callbacks), and transitions to
-success/fail on completion.
+`task()` creates a child node, starts it, runs `fn` inside a new
+AsyncLocalStorage scope (so module-level functions also work inside explicit
+callbacks), and transitions to success/fail on completion.
 
 #### Imperative API
 
@@ -626,14 +792,14 @@ interface TaskHandle {
 }
 ```
 
-`begin()` creates and starts the node immediately. No ALS involved — the
-imperative API is fully explicit.
+`begin()` creates and starts the node immediately. No AsyncLocalStorage involved
+— the imperative API is fully explicit.
 
 #### Error handling
 
-- **Callback/ALS API**: thrown error → task fails, error stored on node. Error
-  propagates up through the callback chain. `run()` catches it, calls
-  `renderer.stop()`, then rethrows.
+- **Callback/AsyncLocalStorage API**: thrown error → task fails, error stored on
+  node. Error propagates up through the callback chain. `run()` catches it,
+  calls `renderer.stop()`, then rethrows.
 - **Imperative API**: user calls `fail(error?)` explicitly.
 - **On `stop()`**: renderer dumps full `logLines[]` buffer for every failed
   task, printed after the final frame. This output is permanent (not
@@ -652,6 +818,76 @@ auto-fails those children. Their status becomes `"fail"` with a synthetic
 ### Layer 6: `src/run-command.ts` — optional subprocess wrapper
 
 Uses `node:child_process` for runtime-agnostic subprocess execution.
+
+#### `logFromStream()` — stream-to-log piping
+
+Accepts a variety of stream shapes and pipes their content line-by-line into the
+current task's log via `log()`. Resolves when all streams have ended.
+
+##### Type signature
+
+```typescript
+import type { Readable } from "node:stream";
+
+/** A Node.js Readable or a web ReadableStream<Uint8Array>. */
+type AnyReadable = Readable | ReadableStream<Uint8Array>;
+
+/** An object with optional stdout and/or stderr streams. */
+interface StreamPair {
+  stdout?: AnyReadable | null;
+  stderr?: AnyReadable | null;
+}
+
+/** What logFromStream accepts. */
+type LogFromStreamInput =
+  | AnyReadable
+  | AnyReadable[]
+  | StreamPair;
+
+/**
+ * Pipe one or more streams into the current task's log.
+ * Reads all streams concurrently; lines go to log() in event-loop arrival
+ * order, which closely matches the source's actual write order.
+ * Resolves when all streams have ended.
+ */
+export async function logFromStream(input: LogFromStreamInput): Promise<void>;
+```
+
+The `StreamPair` shape covers subprocess objects from all three runtimes:
+
+| Runtime | API                          | Passed as                                                                                  |
+| :------ | :--------------------------- | :----------------------------------------------------------------------------------------- |
+| Node.js | `child_process.spawn()`      | `child` — has `.stdout: Readable \| null`, `.stderr: Readable \| null`                     |
+| Deno    | `new Deno.Command().spawn()` | `child` — has `.stdout: ReadableStream<Uint8Array>`, `.stderr: ReadableStream<Uint8Array>` |
+| Bun     | `Bun.spawn()`                | `child` — has `.stdout: ReadableStream<Uint8Array>`, `.stderr: ReadableStream<Uint8Array>` |
+
+##### Input detection logic
+
+1. Is it an `Array`? → process each element concurrently via `Promise.all`
+2. Has `.getReader()` method? → web `ReadableStream`, convert to Node.js
+   `Readable` via `Readable.fromWeb()`, then use `node:readline`
+3. Has `.pipe()` method? → Node.js `Readable`, use `node:readline` directly
+4. Has `.stdout` or `.stderr` property (and isn't itself a stream)? →
+   `StreamPair`, extract non-null streams, process concurrently via
+   `Promise.all`
+
+##### Line splitting
+
+Each stream is split into lines using `node:readline` `createInterface()`. Each
+line is passed to `log()`. This handles both `\n` and `\r\n` line endings.
+
+For web `ReadableStream<Uint8Array>`, convert first via
+`Readable.fromWeb(stream)` from `node:stream`, then use `node:readline` as
+usual.
+
+##### Ordering
+
+When multiple streams are read concurrently (e.g. stdout + stderr), lines go to
+`log()` in event-loop arrival order. This closely matches the subprocess's
+actual write order — any divergence is sub-millisecond and invisible to humans.
+This is the same approach used by Docker Buildkit and Docker Compose.
+
+#### `runCommand()` — subprocess convenience wrapper
 
 ```typescript
 import type { SpawnOptions } from "node:child_process";
@@ -672,7 +908,7 @@ export async function runCommand(
 ): Promise<RunCommandResult>;
 
 /**
- * Explicit-context version for when ALS isn't available.
+ * Explicit-context version for when AsyncLocalStorage isn't available.
  */
 export async function runCommandExplicit(
   ctx: TaskContext,
@@ -684,11 +920,11 @@ export async function runCommandExplicit(
 
 Implementation:
 
-1. Calls `task(title, ...)` (ALS version) or `ctx.task(title, ...)` (explicit)
+1. Calls `logTask(title, ...)` (AsyncLocalStorage version) or
+   `ctx.task(title, ...)` (explicit)
 2. Spawns via
    `spawn(command[0], command.slice(1), { ...options, stdio: ["ignore", "pipe", "pipe"] })`
-3. Reads stdout and stderr line-by-line using `node:readline`
-   `createInterface()`, calls `log()` for each line
+3. Calls `logFromStream(child)` to pipe stdout+stderr to the task's log
 4. Awaits process `'close'` event wrapped in a Promise
 5. Non-zero exit → throws (auto-fails the task)
 
@@ -704,7 +940,7 @@ export type {
 } from "./src/log-fold.ts";
 
 // AsyncLocalStorage convenience functions
-export { log, logLines, run, task } from "./src/context.ts";
+export { log, logLines, logTask, withLogFold } from "./src/context.ts";
 
 // Types
 export type { TaskNode, TaskStatus } from "./src/task-node.ts";
@@ -714,7 +950,16 @@ The `run-command` module is a separate submodule export:
 
 ```typescript
 // @hugojosefson/log-fold/run-command
-export { runCommand, runCommandExplicit } from "./src/run-command.ts";
+export {
+  logFromStream,
+  runCommand,
+  runCommandExplicit,
+} from "./src/run-command.ts";
+export type {
+  AnyReadable,
+  LogFromStreamInput,
+  StreamPair,
+} from "./src/run-command.ts";
 ```
 
 `deno.jsonc` exports:
@@ -762,15 +1007,15 @@ Test the pure `computeFrame()` function directly.
 - No tasks → only header line
 - Deeply nested → correct indentation at each level
 
-#### `test/context.test.ts` — ALS context tests
+#### `test/context.test.ts` — AsyncLocalStorage context tests
 
-- `task()` outside `run()` throws
-- `log()` outside `run()` is a no-op
-- `task()` inside `run()` creates child of root
-- Nested `task()` calls create correct hierarchy
-- `Promise.all` with multiple `task()` calls → separate branches
+- `logTask()` outside any context auto-inits a session
+- `log()` outside any context is a no-op
+- `logTask()` inside `withLogFold()` creates child of root
+- Nested `logTask()` calls create correct hierarchy
+- `Promise.all` with multiple `logTask()` calls → separate branches
 - `log()` goes to the correct task in concurrent context
-- Mixed ALS and explicit context in the same tree
+- Mixed AsyncLocalStorage and explicit context in the same tree
 
 #### `test/log-fold.test.ts` — integration tests
 
@@ -790,17 +1035,17 @@ Tests use a mock output stream.
 - Run `echo hello` → log contains "hello"
 - Run a failing command → task fails
 - Stdout and stderr both captured
-- ALS version auto-nests under current task
+- AsyncLocalStorage version auto-nests under current task
 
 ### Layer 9: example and docs
 
 #### `readme/example-usage.ts`
 
 ```typescript
-import { log, run, task } from "../mod.ts";
+import { log, logTask } from "../mod.ts";
 
-await run(async () => {
-  await task("Install dependencies", async () => {
+await logTask("All", async () => {
+  await logTask("Install dependencies", async () => {
     log("npm install...");
     await new Promise((r) => setTimeout(r, 500));
     log("added 247 packages in 0.5s");
@@ -808,17 +1053,17 @@ await run(async () => {
 
   // Concurrent tasks
   await Promise.all([
-    task("Compile TypeScript", async () => {
+    logTask("Compile TypeScript", async () => {
       log("tsc --build");
       await new Promise((r) => setTimeout(r, 300));
     }),
-    task("Lint", async () => {
+    logTask("Lint", async () => {
       log("eslint src/");
       await new Promise((r) => setTimeout(r, 200));
     }),
   ]);
 
-  await task("Test", async () => {
+  await logTask("Test", async () => {
     log("running 42 tests...");
     await new Promise((r) => setTimeout(r, 400));
     log("42 tests passed");
@@ -828,9 +1073,9 @@ await run(async () => {
 
 #### `readme/README.md`
 
-Update template with: what log-fold does, install instructions, ALS API example,
-explicit context example, imperative example, concurrent tasks example,
-subprocess wrapper example, options reference.
+Update template with: what log-fold does, install instructions,
+AsyncLocalStorage API example, explicit context example, imperative example,
+concurrent tasks example, subprocess wrapper example, options reference.
 
 ## VT100 extension point
 
@@ -878,22 +1123,40 @@ through `node:` built-in modules:
 ## Cancellation (future, not v1)
 
 Out of scope for initial implementation. The user manages their own
-`AbortController`. Future extension point: `run()` and `task()` could accept
-`{ signal: AbortSignal }` to propagate cancellation through the tree.
+`AbortController`. Future extension point: `withLogFold()` and `logTask()` could
+accept `{ signal: AbortSignal }` to propagate cancellation through the tree.
+
+## OpenTelemetry bridge (future, not v1)
+
+A future `@hugojosefson/log-fold/otel` entry point could provide a bridge that:
+
+1. **Emits OTel spans** for each log-fold task — so they show up in tracing
+   backends (Jaeger, Zipkin, etc.) alongside the terminal rendering
+2. **Optionally consumes OTel spans** — for users with existing OTel
+   instrumentation who want terminal rendering
+
+This approach keeps log-fold lightweight for users who just want progress
+output, while encouraging OTel adoption by providing immediate visual feedback
+for instrumented code.
+
+The bridge is post-v1 because OTel's `SpanProcessor` API doesn't support
+real-time observation of span events during execution — the log tail window
+(log-fold's key feature) requires our own API for streaming log lines.
 
 ## Implementation order
 
 1. `src/ansi.ts` — rewrite: keep only `hideCursor`/`showCursor` constants
 2. `src/task-node.ts` — update: add `findRunningLeaves`, `countTasks`,
    `logBytes`; remove `findDeepestRunning`
-3. `src/context.ts` — ALS store, module-level `run()`, `task()`, `log()`,
-   `logLines()`
+3. `src/context.ts` — AsyncLocalStorage store, module-level `logTask()`,
+   `withLogFold()`, `log()`, `logLines()`
 4. `src/renderer.ts` — `computeFrame()` pure function + TTY renderer (using
    `node:tty` `WriteStream` methods, render loop, cursor strategy) + plain
    renderer
 5. `src/log-fold.ts` — `LogFold` class, `TaskContext`, `TaskHandle`,
    `LogFoldOptions`
-6. `src/run-command.ts` — `node:child_process` wrapper (ALS + explicit versions)
+6. `src/run-command.ts` — `node:child_process` wrapper (AsyncLocalStorage +
+   explicit versions)
 7. `mod.ts` — public exports
 8. `deno.jsonc` — add `@std/fmt`, update exports
 9. `test/task-node.test.ts`
