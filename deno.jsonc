@@ -1,0 +1,26 @@
+{
+  "name": "@hugojosefson/log-fold",
+  "version": "0.0.0",
+  "license": "MIT",
+  "exports": {
+    ".": "./mod.ts",
+    "./example-usage": "./readme/example-usage.ts"
+  },
+  "tasks": {
+    "default": "       deno fmt && deno lint --fix && (deno check & deno task test) && deno task readme",
+    "all": "           deno task default && deno publish --dry-run",
+    "test": "          deno test --parallel --trace-leaks --coverage",
+    "dev": "           deno test --parallel --trace-leaks --watch",
+    "coverage": "      deno coverage",
+    "readme": "        touch README.md && chmod +w README.md && ./readme/generate-readme.ts readme/README.md > README.md && deno fmt README.md; chmod -w README.md",
+    "git-is-clean": "  test -z \"$(git status --porcelain)\"",
+    "version": "       deno --allow-all npm:fork-version@4.1.0 --inspect-version",
+    "release": "       echo 'ERROR: Not usually a good idea to do the release locally. Instead, push the main branch, and let the release workflow perform the actual release.'; exit 2",
+    "release:run": "   deno task release:ready && deno task release:commit && deno task release:tag && deno task release:push",
+    "release:ready": " deno task git-is-clean && deno task default && deno task git-is-clean",
+    "release:commit": "deno --allow-all npm:fork-version@4.1.0 --changelog-all --tag-prefix='' --skip-tag && deno fmt CHANGELOG.md && git add CHANGELOG.md && git commit --amend --no-edit",
+    "release:tag": "   git tag $(deno task version)",
+    "release:push": "  git push origin main $(deno task version)"
+  },
+  "lock": false
+}
