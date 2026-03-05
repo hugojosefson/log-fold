@@ -2,52 +2,73 @@
 
 ## Goal
 
-Build `@hugojosefson/log-fold` — a Deno-first library that renders a "docker
-buildx"-style collapsing task tree to the terminal. Tasks collapse to a single
-line when complete; running tasks expand to show sub-tasks and a tail window of
-subprocess output. Multiple tasks can run concurrently. On error, the full log
-is dumped.
+Build `@hugojosefson/log-fold` — a runtime-agnostic library (Deno, Node.js, Bun)
+that renders a "docker buildx"-style collapsing task tree to the terminal. Tasks
+collapse to a single line when complete; running tasks expand to show sub-tasks
+and a tail window of subprocess output. Multiple tasks can run concurrently. On
+error, the full log is dumped.
 
 ## Design decisions (confirmed)
 
-| Decision               | Choice                                                                                                        |
-| :--------------------- | :------------------------------------------------------------------------------------------------------------ |
-| API style              | AsyncLocalStorage-based implicit context (primary) + explicit context passing (backup) + imperative begin/end |
-| Log tail               | Keep full log buffer, display last N lines in tail window. Print full log on error                            |
-| VT100 emulation        | Skip for now; design the log buffer so a VT100 parser can plug in later                                       |
-| Subprocess integration | Accept log lines as core API; optional convenience wrapper for `Deno.Command`                                 |
-| Runtime                | Deno-first (uses `node:async_hooks`, `Deno.consoleSize`, `Deno.stdout`); also works on Node.js and Bun        |
-| Dependencies           | `@std/fmt/colors` + `node:async_hooks` (built-in, zero fetched deps)                                          |
-| Unicode                | Unicode symbols only (`✓`, `✗`, `⏳`, `│`), no ASCII fallback                                                 |
-| Colors                 | Buildkit-style: cyan for completed, red for errors                                                            |
-| Exports                | Submodule exports in `deno.jsonc`                                                                             |
-| Concurrency            | Support multiple children running simultaneously under one parent                                             |
+| Decision               | Choice                                                                                                                                                                    |
+| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| API style              | AsyncLocalStorage-based implicit context (primary) + explicit context passing (backup) + imperative begin/end                                                             |
+| Log tail               | Keep full log buffer, display last N lines in tail window. Print full log on error                                                                                        |
+| VT100 emulation        | Skip for now; design the log buffer so a VT100 parser can plug in later                                                                                                   |
+| Subprocess integration | Accept log lines as core API; optional convenience wrapper using `node:child_process`                                                                                     |
+| Runtime                | Runtime-agnostic via `node:` built-in modules (`node:tty`, `node:process`, `node:async_hooks`, `node:child_process`). No Deno-specific APIs                               |
+| Dependencies           | `@std/fmt/colors` + `node:` built-ins (zero fetched deps)                                                                                                                 |
+| Terminal control       | `node:tty` `WriteStream` methods (`cursorTo`, `moveCursor`, `clearLine`, `clearScreenDown`) instead of hand-written ANSI escapes. Only cursor hide/show requires raw ANSI |
+| Unicode                | Unicode symbols only (`✓`, `✗`, `⏳`, `│`), no ASCII fallback                                                                                                             |
+| Colors                 | Buildkit-style: cyan for completed, red for errors                                                                                                                        |
+| Exports                | Submodule exports in `deno.jsonc`                                                                                                                                         |
+| Concurrency            | Support multiple children running simultaneously under one parent                                                                                                         |
 
 ## Architecture
 
 ```
 src/
-├── ansi.ts          # ANSI escape constants + writeSync helper
+├── ansi.ts          # Cursor hide/show constants (only what node:tty lacks)
 ├── task-node.ts     # TaskNode data model, tree operations
 ├── context.ts       # AsyncLocalStorage-based implicit task context
-├── renderer.ts      # Renderer interface + TTY + Plain implementations
+├── renderer.ts      # Renderer interface + TTY (node:tty) + Plain implementations
 ├── log-fold.ts      # LogFold class — the public API
-├── run-command.ts   # Optional Deno.Command convenience wrapper
+├── run-command.ts   # Optional subprocess wrapper (node:child_process)
 └── cli.ts           # CLI entry point (existing scaffold)
 mod.ts               # Public re-exports
 ```
 
 ## Detailed design
 
-### Layer 1: `src/ansi.ts` — ANSI escape utilities
+### Layer 1: `src/ansi.ts` — ANSI escape constants
 
-Already written. Contains:
+Minimal file — only the two escape sequences that `node:tty` `WriteStream`
+doesn't provide as methods:
 
-- `cursorUp(n)`, `cursorColumn0`, `eraseDown`, `eraseLine`
-- `hideCursor`, `showCursor`
-- `writeSync(s, writer)` — writes string as bytes to a `{ writeSync }` target
+```typescript
+/** Hide the cursor. */
+export const hideCursor = "\x1b[?25l";
 
-Minimal — ~8 constants. No external deps.
+/** Show the cursor. */
+export const showCursor = "\x1b[?25h";
+```
+
+Everything else is handled by `node:tty` `WriteStream` methods on
+`process.stdout`:
+
+| Operation                     | Method                             |
+| :---------------------------- | :--------------------------------- |
+| Move cursor up N lines        | `process.stdout.moveCursor(0, -n)` |
+| Move cursor to column 0       | `process.stdout.cursorTo(0)`       |
+| Erase current line            | `process.stdout.clearLine(0)`      |
+| Erase cursor to end of screen | `process.stdout.clearScreenDown()` |
+| Get terminal size             | `process.stdout.columns`, `.rows`  |
+| Detect TTY                    | `process.stdout.isTTY`             |
+| Write string                  | `process.stdout.write(s)`          |
+
+The existing `src/ansi.ts` needs to be rewritten — remove `cursorUp`,
+`cursorColumn0`, `eraseDown`, `eraseLine`, `writeSync`, and the `TextEncoder`.
+Keep only `hideCursor` and `showCursor`.
 
 ### Layer 2: `src/task-node.ts` — task tree data model
 
@@ -368,7 +389,7 @@ the tree directly on each render tick. The
 `onTaskStart`/`onTaskEnd`/`onLogAppend` callbacks serve as dirty-flag triggers,
 not data carriers.
 
-#### TTY renderer — frame-based re-render
+#### TTY renderer — frame-based re-render (using `node:tty` `WriteStream`)
 
 ##### Render loop
 
@@ -451,13 +472,16 @@ If the total frame exceeds terminal height:
 
 ##### Cursor strategy
 
-1. Move cursor up by `previousLineCount` lines, move to column 0
-2. Hide cursor
-3. Print all lines of the new frame (each line = `eraseLine` + content + `\n`)
-4. If new frame is shorter: blank leftover lines with `eraseLine` + `\n`, then
-   cursor up by the difference
-5. Track `lineCount` for next cycle
-6. Show cursor
+Uses `node:tty` `WriteStream` methods on `process.stdout`:
+
+1. `moveCursor(0, -previousLineCount)` to go back to the frame origin
+2. `cursorTo(0)` to move to column 0
+3. `write(hideCursor)` (raw ANSI — no built-in method)
+4. For each line: `clearLine(0)` then `write(content + "\n")`
+5. If new frame is shorter: `clearLine(0)` + `write("\n")` for leftover lines,
+   then `moveCursor(0, -difference)` to park the cursor
+6. Track `lineCount` for next cycle
+7. `write(showCursor)` (raw ANSI)
 
 ##### First render
 
@@ -466,11 +490,14 @@ flag prevents moving past the origin.
 
 ##### Terminal resize
 
-Poll `Deno.consoleSize()` at each render tick. No SIGWINCH handler needed.
+`process.stdout.columns` and `process.stdout.rows` are read at each render tick.
+These are updated automatically by the runtime when the terminal resizes (via
+the `'resize'` event on `process.stdout`). No manual SIGWINCH handler or polling
+needed.
 
 ##### Non-TTY detection
 
-`Deno.stdout.isTerminal()` at startup → selects TTY or plain renderer.
+`process.stdout.isTTY` at startup → selects TTY or plain renderer.
 
 #### Plain renderer — sequential text output
 
@@ -503,15 +530,21 @@ The `LogFold` class owns the task tree and renderer.
 #### Constructor options
 
 ```typescript
+import type { WriteStream } from "node:tty";
+
 interface LogFoldOptions {
-  /** Force TTY or plain mode. Default: "auto" (detect). */
+  /** Force TTY or plain mode. Default: "auto" (detect via isTTY). */
   mode?: "tty" | "plain" | "auto";
   /** Number of log tail lines to show per task. Default: 6. */
   tailLines?: number;
   /** Render tick interval in ms. Default: 150. */
   tickInterval?: number;
-  /** Output stream. Default: Deno.stdout. */
-  output?: { writeSync(p: Uint8Array): number };
+  /**
+   * Output stream. Default: process.stdout.
+   * When mode is "tty", must be a tty.WriteStream (for cursor methods).
+   * When mode is "plain", any Writable with write() works.
+   */
+  output?: WriteStream | { write(s: string): boolean };
   /** Header text (e.g. "Building", "Deploying"). Default: "Building". */
   headerText?: string;
 }
@@ -618,9 +651,16 @@ auto-fails those children. Their status becomes `"fail"` with a synthetic
 
 ### Layer 6: `src/run-command.ts` — optional subprocess wrapper
 
-With ALS, the API is cleaner — no need to pass a `TaskContext`:
+Uses `node:child_process` for runtime-agnostic subprocess execution.
 
 ```typescript
+import type { SpawnOptions } from "node:child_process";
+
+interface RunCommandResult {
+  code: number | null;
+  signal: string | null;
+}
+
 /**
  * Run a command as a sub-task, piping stdout+stderr to the task's log.
  * Auto-nests under the current task context (via AsyncLocalStorage).
@@ -628,8 +668,8 @@ With ALS, the API is cleaner — no need to pass a `TaskContext`:
 export async function runCommand(
   title: string,
   command: string[],
-  options?: Omit<Deno.CommandOptions, "stdout" | "stderr">,
-): Promise<Deno.CommandStatus>;
+  options?: Omit<SpawnOptions, "stdio">,
+): Promise<RunCommandResult>;
 
 /**
  * Explicit-context version for when ALS isn't available.
@@ -638,18 +678,18 @@ export async function runCommandExplicit(
   ctx: TaskContext,
   title: string,
   command: string[],
-  options?: Omit<Deno.CommandOptions, "stdout" | "stderr">,
-): Promise<Deno.CommandStatus>;
+  options?: Omit<SpawnOptions, "stdio">,
+): Promise<RunCommandResult>;
 ```
 
 Implementation:
 
 1. Calls `task(title, ...)` (ALS version) or `ctx.task(title, ...)` (explicit)
-2. Spawns
-   `new Deno.Command(command[0], { args: command.slice(1), ...options, stdout: "piped", stderr: "piped" })`
-3. Reads stdout and stderr concurrently via `Promise.all`, calls `log()` for
-   each line
-4. Awaits process completion
+2. Spawns via
+   `spawn(command[0], command.slice(1), { ...options, stdio: ["ignore", "pipe", "pipe"] })`
+3. Reads stdout and stderr line-by-line using `node:readline`
+   `createInterface()`, calls `log()` for each line
+4. Awaits process `'close'` event wrapped in a Promise
 5. Non-zero exit → throws (auto-fails the task)
 
 ### Layer 7: `mod.ts` — public exports
@@ -806,7 +846,8 @@ The log buffer stores plain text lines (`string[]`). To add VT100 emulation:
 
 ## `deno.jsonc` changes
 
-Add `@std/fmt` to imports. Update exports for submodules:
+Add `@std/fmt` to imports. Update exports for submodules. Add `nodeModulesDir`
+so `node:` built-in module resolution works cleanly in Deno:
 
 ```jsonc
 {
@@ -823,6 +864,17 @@ Add `@std/fmt` to imports. Update exports for submodules:
 }
 ```
 
+No Deno-specific runtime APIs are used anywhere. All runtime interaction goes
+through `node:` built-in modules:
+
+| Module               | Used for                                     |
+| :------------------- | :------------------------------------------- |
+| `node:tty`           | `WriteStream` type, cursor/clear methods     |
+| `node:process`       | `process.stdout` (the default output stream) |
+| `node:async_hooks`   | `AsyncLocalStorage` for implicit context     |
+| `node:child_process` | `spawn()` in `run-command.ts`                |
+| `node:readline`      | Line-by-line reading of subprocess output    |
+
 ## Cancellation (future, not v1)
 
 Out of scope for initial implementation. The user manages their own
@@ -831,16 +883,17 @@ Out of scope for initial implementation. The user manages their own
 
 ## Implementation order
 
-1. ~~`src/ansi.ts`~~ — done
+1. `src/ansi.ts` — rewrite: keep only `hideCursor`/`showCursor` constants
 2. `src/task-node.ts` — update: add `findRunningLeaves`, `countTasks`,
    `logBytes`; remove `findDeepestRunning`
 3. `src/context.ts` — ALS store, module-level `run()`, `task()`, `log()`,
    `logLines()`
-4. `src/renderer.ts` — `computeFrame()` pure function + TTY renderer (render
-   loop, cursor strategy) + plain renderer
+4. `src/renderer.ts` — `computeFrame()` pure function + TTY renderer (using
+   `node:tty` `WriteStream` methods, render loop, cursor strategy) + plain
+   renderer
 5. `src/log-fold.ts` — `LogFold` class, `TaskContext`, `TaskHandle`,
    `LogFoldOptions`
-6. `src/run-command.ts` — `Deno.Command` wrapper (ALS + explicit versions)
+6. `src/run-command.ts` — `node:child_process` wrapper (ALS + explicit versions)
 7. `mod.ts` — public exports
 8. `deno.jsonc` — add `@std/fmt`, update exports
 9. `test/task-node.test.ts`
