@@ -33,14 +33,18 @@ nested units of work benefits.
 
 ```
 src/
-├── ansi.ts          # Cursor hide/show constants (only what node:tty lacks)
-├── task-node.ts     # TaskNode data model, tree operations
-├── context.ts       # AsyncLocalStorage-based implicit task context
-├── renderer.ts      # Renderer interface + TTY (node:tty) + Plain implementations
-├── log-fold.ts      # LogFold class — the public API
-├── run-command.ts   # Optional subprocess wrapper (node:child_process)
-└── cli.ts           # CLI entry point (existing scaffold)
-mod.ts               # Public re-exports
+├── ansi.ts              # Cursor hide/show constants (only what node:tty lacks)
+├── task-node.ts         # TaskNode data model, tree operations
+├── context.ts           # AsyncLocalStorage-based implicit task context
+├── log-from-stream.ts   # logFromStream — pipe streams into current task's log
+├── log-fold.ts          # LogFold class — the public API
+├── run-command.ts       # Optional subprocess wrapper (node:child_process)
+├── renderer/
+│   ├── renderer.ts      # Renderer interface
+│   ├── compute-frame.ts # computeFrame pure function + FrameOptions
+│   ├── tty-renderer.ts  # TtyRenderer (implements Renderer)
+│   └── plain-renderer.ts # PlainRenderer (implements Renderer)
+mod.ts                   # Public re-exports
 ```
 
 ## Detailed design
@@ -225,7 +229,7 @@ export async function logTask(title, fn) {
 
 #### DX comparison — use cases
 
-**Use case 1 — simple sequential script (AsyncLocalStorage)**
+##### Use case 1 — simple sequential script (AsyncLocalStorage)
 
 ```typescript
 import { log, logTask } from "@hugojosefson/log-fold";
@@ -245,7 +249,7 @@ No `withLogFold()` needed — the outer `logTask("Build")` auto-initializes the
 rendering session. No context objects passed anywhere. `install()` could itself
 call `logTask()` and `log()` and everything auto-nests.
 
-**Use case 2 — deep nesting across module boundaries (AsyncLocalStorage)**
+##### Use case 2 — deep nesting across module boundaries (AsyncLocalStorage)
 
 ```typescript
 // build.ts
@@ -272,7 +276,7 @@ export async function compileFiles() {
 }
 ```
 
-**Use case 3 — concurrent tasks**
+##### Use case 3 — concurrent tasks
 
 ```typescript
 import { log, logTask } from "@hugojosefson/log-fold";
@@ -296,7 +300,7 @@ await logTask("CI", async () => {
 Each branch of `Promise.all` has its own async context, so `log()` calls inside
 each go to the right task. AsyncLocalStorage handles this correctly.
 
-**Use case 4 — library code that optionally logs**
+##### Use case 4 — library code that optionally logs
 
 ```typescript
 // db.ts — works whether or not log-fold is active
@@ -309,7 +313,7 @@ export async function migrate() {
 }
 ```
 
-**Use case 5 — explicit context passing (backup API)**
+##### Use case 5 — explicit context passing (backup API)
 
 For testing, or when AsyncLocalStorage doesn't suit the use case:
 
@@ -327,7 +331,7 @@ await lf.run(async (root) => {
 });
 ```
 
-**Use case 6 — imperative API (long-running/event-driven)**
+##### Use case 6 — imperative API (long-running/event-driven)
 
 ```typescript
 import { LogFold } from "@hugojosefson/log-fold";
@@ -355,7 +359,7 @@ try {
 }
 ```
 
-**Use case 7 — subprocess with auto-nesting (AsyncLocalStorage + runCommand)**
+##### Use case 7 — subprocess with auto-nesting (AsyncLocalStorage + runCommand)
 
 ```typescript
 import { logTask } from "@hugojosefson/log-fold";
@@ -368,7 +372,7 @@ await logTask("Build", async () => {
 });
 ```
 
-**Use case 8 — error with full log dump**
+##### Use case 8 — error with full log dump
 
 ```typescript
 import { log, logTask } from "@hugojosefson/log-fold";
@@ -384,7 +388,7 @@ await logTask("Build", async () => {
 });
 ```
 
-**Use case 9 — wrapping third-party code**
+##### Use case 9 — wrapping third-party code
 
 ```typescript
 import { logTask } from "@hugojosefson/log-fold";
@@ -398,7 +402,7 @@ await logTask("Deploy", async () => {
 });
 ```
 
-**Use case 10 — custom config via withLogFold**
+##### Use case 10 — custom config via withLogFold
 
 Use `withLogFold()` when you need non-default renderer options:
 
@@ -422,7 +426,7 @@ Without `withLogFold()`, the first `logTask()` auto-initializes with defaults.
 `withLogFold()` is only needed for custom `tailLines`, `mode`, `output`,
 `headerText`, etc.
 
-**Use case 11 — mixed AsyncLocalStorage and explicit in the same tree**
+##### Use case 11 — mixed AsyncLocalStorage and explicit in the same tree
 
 Both APIs share the same underlying `LogFold` instance and task tree:
 
@@ -449,7 +453,7 @@ up the AsyncLocalStorage store. The module-level `logTask()` reads from
 AsyncLocalStorage; `root.task()` uses the explicit reference. Both create nodes
 in the same tree.
 
-**Use case 12 — BYO subprocess with `logFromStream` (Node.js `child_process`)**
+##### Use case 12 — BYO subprocess with `logFromStream` (Node.js `child_process`)
 
 When you already have your own `ChildProcess` and want to pipe its output into a
 log-fold task, use `logFromStream()`. It accepts the child process object
@@ -458,7 +462,7 @@ directly — it picks up `.stdout` and `.stderr` automatically:
 ```typescript
 import { spawn } from "node:child_process";
 import { logTask } from "@hugojosefson/log-fold";
-import { logFromStream } from "@hugojosefson/log-fold/run-command";
+import { logFromStream } from "@hugojosefson/log-fold";
 
 await logTask("My process", async () => {
   const child = spawn("my-tool", ["--flag"]);
@@ -466,11 +470,11 @@ await logTask("My process", async () => {
 });
 ```
 
-**Use case 13 — BYO subprocess with `logFromStream` (Deno `Command`)**
+##### Use case 13 — BYO subprocess with `logFromStream` (Deno `Command`)
 
 ```typescript
 import { logTask } from "@hugojosefson/log-fold";
-import { logFromStream } from "@hugojosefson/log-fold/run-command";
+import { logFromStream } from "@hugojosefson/log-fold";
 
 await logTask("Build", async () => {
   const child = new Deno.Command("npm", {
@@ -482,11 +486,11 @@ await logTask("Build", async () => {
 });
 ```
 
-**Use case 14 — BYO subprocess with `logFromStream` (Bun `spawn`)**
+##### Use case 14 — BYO subprocess with `logFromStream` (Bun `spawn`)
 
 ```typescript
 import { logTask } from "@hugojosefson/log-fold";
-import { logFromStream } from "@hugojosefson/log-fold/run-command";
+import { logFromStream } from "@hugojosefson/log-fold";
 
 await logTask("Build", async () => {
   const child = Bun.spawn(["npm", "install"]);
@@ -494,13 +498,13 @@ await logTask("Build", async () => {
 });
 ```
 
-**Use case 15 — piping a fetch response body**
+##### Use case 15 — piping a fetch response body
 
 `logFromStream()` also accepts a single `ReadableStream`:
 
 ```typescript
 import { logTask } from "@hugojosefson/log-fold";
-import { logFromStream } from "@hugojosefson/log-fold/run-command";
+import { logFromStream } from "@hugojosefson/log-fold";
 
 await logTask("Fetch logs", async () => {
   const response = await fetch("https://example.com/logs");
@@ -508,7 +512,7 @@ await logTask("Fetch logs", async () => {
 });
 ```
 
-**Use case 16 — manual stream wiring (no `logFromStream`)**
+##### Use case 16 — manual stream wiring (no `logFromStream`)
 
 For full control, you can wire streams yourself using `log()` directly:
 
@@ -569,7 +573,7 @@ Extracted into a pure function `computeFrame(roots, options)` returning
 
 Each render cycle produces a list of output lines:
 
-**Step 1 — Header line**
+###### Step 1 — header line
 
 ```
 [+] Building 12.3s (3/8)
@@ -579,7 +583,7 @@ Each render cycle produces a list of output lines:
 Shows elapsed wall time since `start()` was called, completed/total task count
 (all nodes in tree, not just roots), and "FINISHED" when everything is done.
 
-**Step 2 — Task lines (recursive)**
+###### Step 2 — task lines (recursive)
 
 Walk the task tree depth-first. For each node at a given `depth`:
 
@@ -597,7 +601,7 @@ simultaneously. Each running child is shown expanded (its own line + its
 children). Completed siblings are shown collapsed. This is exactly what buildkit
 does — all started jobs appear; running ones get expanded subtrees.
 
-**Step 3 — Log tail windows (competitive allocation)**
+###### Step 3 — log tail windows (competitive allocation)
 
 Following buildkit's `setupTerminals()` approach:
 
@@ -622,7 +626,7 @@ Tail lines rendered dimmed, prefixed with the task's indent + `│`:
 │ added 247 packages in 3.1s
 ```
 
-**Step 4 — Viewport fitting**
+###### Step 4 — viewport fitting
 
 If the total frame exceeds terminal height:
 
@@ -942,6 +946,14 @@ export type {
 // AsyncLocalStorage convenience functions
 export { log, logLines, logTask, withLogFold } from "./src/context.ts";
 
+// Stream piping
+export { logFromStream } from "./src/log-from-stream.ts";
+export type {
+  AnyReadable,
+  LogFromStreamInput,
+  StreamPair,
+} from "./src/log-from-stream.ts";
+
 // Types
 export type { TaskNode, TaskStatus } from "./src/task-node.ts";
 ```
@@ -950,16 +962,7 @@ The `run-command` module is a separate submodule export:
 
 ```typescript
 // @hugojosefson/log-fold/run-command
-export {
-  logFromStream,
-  runCommand,
-  runCommandExplicit,
-} from "./src/run-command.ts";
-export type {
-  AnyReadable,
-  LogFromStreamInput,
-  StreamPair,
-} from "./src/run-command.ts";
+export { runCommand, runCommandExplicit } from "./src/run-command.ts";
 ```
 
 `deno.jsonc` exports:
