@@ -15,20 +15,20 @@ nested units of work benefits.
 
 ## Design decisions (confirmed)
 
-| Decision               | Choice                                                                                                                                                                                                                                                                        |
-| :--------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| API style              | Single `logTask()` function with AsyncLocalStorage-based implicit context. Auto-inits on first call; accepts optional config via options argument. Module-level `log()`, `logFromStream()`, `warnCurrentTask()`, `skipCurrentTask()`, `setTaskTitle()` for in-task operations |
-| Log tail               | Keep full log buffer, display last N lines in tail window. Print full log on error                                                                                                                                                                                            |
-| VT100 emulation        | Skip for now; design the log buffer so a VT100 parser can plug in later                                                                                                                                                                                                       |
-| Subprocess integration | `logFromStream()` accepts Node.js `Readable`, web `ReadableStream`, arrays, or `{ stdout, stderr }` objects (covers `node:child_process`, `Deno.Command`, `Bun.spawn`). `runCommand()` wraps `node:child_process` as convenience                                              |
-| Runtime                | Runtime-agnostic via `node:` built-in modules (`node:tty`, `node:process`, `node:async_hooks`, `node:child_process`). No Deno-specific APIs                                                                                                                                   |
-| Dependencies           | `jsr:@std/fmt` (includes colors) + `npm:cli-spinners` + `node:` built-ins                                                                                                                                                                                                     |
-| Colors support         | Delegates to `jsr:@std/fmt/colors` which auto-checks `NO_COLOR` env var on module load. The `colors` option overrides: `"auto"` (default, let @std/fmt decide), `true` (force on via `setColorEnabled(true)` after load), `false` (force off via `setColorEnabled(false)`)    |
-| Terminal control       | `node:tty` `WriteStream` methods (`cursorTo`, `moveCursor`, `clearLine`, `clearScreenDown`) instead of hand-written ANSI escapes. Only cursor hide/show requires raw ANSI                                                                                                     |
-| Unicode                | Unicode symbols only (`✓`, `✗`, `⚠`, `⊘`, `│`), no ASCII fallback. Running tasks use a configurable spinner (default: dots from cli-spinners)                                                                                                                                 |
-| Colors                 | Buildkit-style: cyan for completed, red for errors, yellow for warnings, dim for skipped                                                                                                                                                                                      |
-| Exports                | Submodule exports in `deno.jsonc`                                                                                                                                                                                                                                             |
-| Concurrency            | Support multiple children running simultaneously under one parent                                                                                                                                                                                                             |
+| Decision               | Choice                                                                                                                                                                                                                                                                                           |
+| :--------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| API style              | Single `logTask()` function with AsyncLocalStorage-based implicit context. Auto-inits on first call; accepts optional config via options argument. Module-level `log()`, `logFromStream()`, `setCurrentTaskWarning()`, `setCurrentTaskSkipped()`, `setCurrentTaskTitle()` for in-task operations |
+| Log tail               | Keep full log buffer, display last N lines in tail window. Print full log on error                                                                                                                                                                                                               |
+| VT100 emulation        | Skip for now; design the log buffer so a VT100 parser can plug in later                                                                                                                                                                                                                          |
+| Subprocess integration | `logFromStream()` accepts Node.js `Readable`, web `ReadableStream`, arrays, or `{ stdout, stderr }` objects (covers `node:child_process`, `Deno.Command`, `Bun.spawn`). `runCommand()` wraps `node:child_process` as convenience                                                                 |
+| Runtime                | Runtime-agnostic via `node:` built-in modules (`node:tty`, `node:process`, `node:async_hooks`, `node:child_process`). No Deno-specific APIs                                                                                                                                                      |
+| Dependencies           | `jsr:@std/fmt` (includes colors) + `npm:cli-spinners` + `node:` built-ins                                                                                                                                                                                                                        |
+| Colors support         | Delegates to `jsr:@std/fmt/colors` which auto-checks `NO_COLOR` env var on module load. The `colors` option overrides: `"auto"` (default, let @std/fmt decide), `true` (force on via `setColorEnabled(true)` after load), `false` (force off via `setColorEnabled(false)`)                       |
+| Terminal control       | `node:tty` `WriteStream` methods (`cursorTo`, `moveCursor`, `clearLine`, `clearScreenDown`) instead of hand-written ANSI escapes. Only cursor hide/show requires raw ANSI                                                                                                                        |
+| Unicode                | Unicode symbols only (`✓`, `✗`, `⚠`, `⊘`, `│`), no ASCII fallback. Running tasks use a configurable spinner (default: dots from cli-spinners)                                                                                                                                                    |
+| Colors                 | Buildkit-style: cyan for completed, red for errors, yellow for warnings, dim for skipped                                                                                                                                                                                                         |
+| Exports                | Submodule exports in `deno.jsonc`                                                                                                                                                                                                                                                                |
+| Concurrency            | Support multiple children running simultaneously under one parent                                                                                                                                                                                                                                |
 
 ## Architecture
 
@@ -176,20 +176,20 @@ export function log(text: string): void;
  * When the logTask callback returns, the task's status is preserved as
  * "warning" instead of being overridden to "success".
  */
-export function warnCurrentTask(): void;
+export function setCurrentTaskWarning(): void;
 
 /**
  * Mark the current task as skipped. The logTask callback should return
  * immediately after calling this. The task's status is preserved as
  * "skipped" instead of being overridden to "success".
  */
-export function skipCurrentTask(): void;
+export function setCurrentTaskSkipped(): void;
 
 /**
  * Update the current task's display title. The renderer picks up the
  * change on the next tick.
  */
-export function setTaskTitle(title: string): void;
+export function setCurrentTaskTitle(title: string): void;
 ```
 
 Design choices for "outside context" behavior:
@@ -442,7 +442,8 @@ import { logFromStream, logTask } from "@hugojosefson/log-fold";
 
 await logTask("My process", async () => {
   const child = spawn("my-tool", ["--flag"]);
-  await logFromStream(child);
+  const output = await logFromStream(child);
+  // output is stdout only (stderr piped to log for display, not collected)
 });
 ```
 
@@ -505,14 +506,14 @@ await logTask("My process", async () => {
 ##### Use case 14 — warning status from callback API
 
 ```typescript
-import { log, logTask, warnCurrentTask } from "@hugojosefson/log-fold";
+import { log, logTask, setCurrentTaskWarning } from "@hugojosefson/log-fold";
 
 await logTask("Deploy", async () => {
   log("deploying...");
   const result = await deploy();
   if (result.deprecationWarnings.length > 0) {
     log(`${result.deprecationWarnings.length} deprecation warnings`);
-    warnCurrentTask(); // task shows ⚠ instead of ✓
+    setCurrentTaskWarning(); // task shows ⚠ instead of ✓
   }
 });
 ```
@@ -520,11 +521,11 @@ await logTask("Deploy", async () => {
 ##### Use case 15 — skip status from callback API
 
 ```typescript
-import { logTask, skipCurrentTask } from "@hugojosefson/log-fold";
+import { logTask, setCurrentTaskSkipped } from "@hugojosefson/log-fold";
 
 await logTask("Build cache", async () => {
   if (await cacheExists()) {
-    skipCurrentTask(); // task shows ⊘ instead of ✓
+    setCurrentTaskSkipped(); // task shows ⊘ instead of ✓
     return;
   }
   // ... build cache ...
@@ -534,12 +535,12 @@ await logTask("Build cache", async () => {
 ##### Use case 16 — dynamic task title
 
 ```typescript
-import { log, logTask, setTaskTitle } from "@hugojosefson/log-fold";
+import { log, logTask, setCurrentTaskTitle } from "@hugojosefson/log-fold";
 
 await logTask("Download", async () => {
   const files = await listFiles();
   for (let i = 0; i < files.length; i++) {
-    setTaskTitle(`Download (${i + 1}/${files.length})`);
+    setCurrentTaskTitle(`Download (${i + 1}/${files.length})`);
     await downloadFile(files[i]);
   }
 });
@@ -816,11 +817,33 @@ export type LogTaskOptions = {
 ### Layer 6: `src/log-from-stream.ts` — stream-to-log piping
 
 Accepts a variety of stream shapes and pipes their content line-by-line into the
-current task's log via `log()`. Resolves when all streams have ended.
+current task's log via `log()`. Returns collected lines as a string when all
+streams have ended.
 
 Exported from the default entry point (`mod.ts` / `"."`), not from the
 `run-command` submodule. `runCommand` imports and uses `logFromStream`
 internally.
+
+#### Collection strategy
+
+`logFromStream` maintains its own local `string[]` for the return value. Every
+line from the input streams is both passed to `log()` (for task display) and
+pushed to the local collection. The return value comes from this local
+collection, never from `node.logLines`.
+
+This avoids a subtle bug: if other code calls `log()` concurrently in the same
+task while `logFromStream` is running, those lines would contaminate the return
+value if it read from `node.logLines`. By collecting locally, the return value
+contains exactly the lines that came from the piped stream(s).
+
+For `StreamPair` inputs (process-like objects with `.stdout` and `.stderr`),
+both streams are piped to `log()` for display, but **only stdout lines are
+collected** for the return value. This matches the universal convention that
+stdout is structured output and stderr is diagnostic noise. `runCommand` relies
+on this behavior to capture only stdout as `RunCommandResult.stdout`.
+
+For all other input types (single stream, array, `AsyncIterable`), all lines are
+collected — there's no stdout/stderr distinction to make.
 
 #### Type signature
 
@@ -847,12 +870,20 @@ type LogFromStreamInput =
  * Pipe one or more streams into the current task's log.
  * Reads all streams concurrently; lines go to log() in event-loop arrival
  * order, which closely matches the source's actual write order.
- * Resolves when all streams have ended.
+ *
+ * Collects lines locally (not from node.logLines) so that concurrent log()
+ * calls from other code don't contaminate the return value.
+ *
+ * For StreamPair inputs, only stdout lines are collected for the return
+ * value. Stderr lines are piped to log() for display but excluded from
+ * the returned string.
+ *
+ * Returns collected lines joined with "\n" and .trim()'d.
  *
  * For AsyncIterable<string>, each yielded string is treated as a log line
  * (no further line splitting).
  */
-export async function logFromStream(input: LogFromStreamInput): Promise<void>;
+export async function logFromStream(input: LogFromStreamInput): Promise<string>;
 ```
 
 The `StreamPair` shape covers subprocess objects from all three runtimes:
@@ -865,15 +896,16 @@ The `StreamPair` shape covers subprocess objects from all three runtimes:
 
 #### Input detection logic
 
-1. Is it an `Array`? → process each element concurrently via `Promise.all`
+1. Is it an `Array`? → process each element concurrently via `Promise.all`,
+   collect all lines
 2. Has `Symbol.asyncIterator`? → `AsyncIterable<string>`, consume with
-   `for await (const line of input) { log(line); }`
+   `for await (const line of input) { log(line); collect(line); }`
 3. Has `.getReader()` method? → web `ReadableStream`, convert to Node.js
    `Readable` via `Readable.fromWeb()`, then use `node:readline`
 4. Has `.pipe()` method? → Node.js `Readable`, use `node:readline` directly
 5. Has `.stdout` or `.stderr` property (and isn't itself a stream)? →
-   `StreamPair`, extract non-null streams, process concurrently via
-   `Promise.all`
+   `StreamPair`: pipe both streams to `log()`, but only collect stdout lines for
+   the return value
 
 #### Line splitting
 
@@ -908,6 +940,8 @@ type RunCommandOptions = Omit<SpawnOptions, "stdio"> & {
 type RunCommandResult = {
   code: number | undefined;
   signal: string | undefined;
+  /** Captured stdout output (lines joined with "\n", .trim()'d). */
+  stdout: string;
 };
 
 /**
@@ -926,9 +960,12 @@ Implementation:
 1. Calls `logTask(title, ...)` (AsyncLocalStorage) to create the sub-task
 2. Spawns via
    `spawn(command[0], command.slice(1), { ...options, stdio: ["ignore", "pipe", "pipe"] })`
-3. Calls `logFromStream(child)` to pipe stdout+stderr to the task's log
+3. Calls `logFromStream(child)` — both stdout and stderr are piped to `log()`
+   for display, but only stdout lines are collected for the return value (this
+   is `logFromStream`'s `StreamPair` behavior)
 4. Awaits process exit: wraps the `'close'` event in a Promise, which resolves
-   with `{ code, signal }` after all stdio has ended and the process has exited
+   with `{ code, signal, stdout }` after all stdio has ended and the process has
+   exited
 5. Non-zero exit + `throwOnError !== false` → throws `Error(`Command failed with
    exit code ${code}`)` (auto-fails the task via the enclosing `logTask` catch).
    When `throwOnError` is `false`, non-zero exit returns the result without
@@ -940,9 +977,9 @@ Implementation:
 // AsyncLocalStorage convenience functions (primary API)
 export { log, logTask } from "./src/context.ts";
 export {
-  setTaskTitle,
-  skipCurrentTask,
-  warnCurrentTask,
+  setCurrentTaskSkipped,
+  setCurrentTaskTitle,
+  setCurrentTaskWarning,
 } from "./src/context.ts";
 
 // Stream piping
@@ -1025,9 +1062,9 @@ Test the pure `computeFrame()` function directly.
 - `log()` goes to the correct task in concurrent context
 - `logTask()` with options at top level configures the session
 - `logTask()` with options at nested level logs a warning and ignores options
-- `warnCurrentTask()` sets task status to warning
-- `skipCurrentTask()` sets task status to skipped
-- `setTaskTitle()` updates task title
+- `setCurrentTaskWarning()` sets task status to warning
+- `setCurrentTaskSkipped()` sets task status to skipped
+- `setCurrentTaskTitle()` updates task title
 
 #### `test/log-fold.test.ts` — integration tests
 
@@ -1083,8 +1120,8 @@ await logTask("All", async () => {
 
 Update template with: what log-fold does, install instructions, basic API
 example, concurrent tasks example, subprocess wrapper example, custom options
-example, `warnCurrentTask`/`skipCurrentTask`/`setTaskTitle` examples, options
-reference.
+example, `setCurrentTaskWarning`/`setCurrentTaskSkipped`/`setCurrentTaskTitle`
+examples, options reference.
 
 ## VT100 extension point
 
@@ -1175,8 +1212,9 @@ real-time observation of span events during execution — the log tail window
 8. `src/storage.ts` — `AsyncLocalStorage` instance + `ContextStore` type.
    Type-only imports from this package
 9. `src/context.ts` — module-level `logTask()` (with options overload), `log()`,
-   `warnCurrentTask()`, `skipCurrentTask()`, `setTaskTitle()`. Imports `Session`
-   from `./session.ts` and `storage` from `./storage.ts`
+   `setCurrentTaskWarning()`, `setCurrentTaskSkipped()`,
+   `setCurrentTaskTitle()`. Imports `Session` from `./session.ts` and `storage`
+   from `./storage.ts`
 10. `src/run-command.ts` — `runCommand(title, command, options?)`, uses
     `logTask()` internally
 11. `mod.ts` — public exports
