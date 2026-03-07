@@ -153,11 +153,13 @@ Module-level functions:
  * and stops when this task completes.
  *
  * Options are split into two categories:
- * - Session options (tailLines, mode, output, tickInterval, spinner) only
- *   apply at the top level. Passing session options to a nested logTask()
- *   throws an error — this is a programming error.
- * - Per-task options (map, filter) are allowed at any nesting level and
- *   compose with ancestor tasks' map/filter (child first, then parent).
+ * - Session options (mode, output, tickInterval) only apply at the top
+ *   level. Passing session options to a nested logTask() throws an error
+ *   — this is a programming error.
+ * - Per-task options (tailLines, spinner, map, filter) are allowed at any
+ *   nesting level. tailLines and spinner inherit from the nearest ancestor
+ *   that sets them; map and filter compose with ancestor tasks' map/filter
+ *   (child first, then parent).
  */
 export async function logTask<T>(
   title: string,
@@ -211,11 +213,12 @@ own independent render session. Each session starts and stops its own renderer.
 To unify multiple top-level tasks under one session, wrap them in an outer
 `logTask()`.
 
-Passing session options (mode, tailLines, tickInterval, output, spinner) to a
-nested `logTask()` (inside an existing context) throws an error — these options
-only apply at the top level. This is a programming error and should be caught
-during development. Per-task options (map, filter) are allowed at any nesting
-level.
+Passing session options (mode, tickInterval, output) to a nested `logTask()`
+(inside an existing context) throws an error — these options only apply at the
+top level. This is a programming error and should be caught during development.
+Per-task options (tailLines, spinner, map, filter) are allowed at any nesting
+level. `tailLines` and `spinner` inherit from the nearest ancestor that sets
+them.
 
 `logTask()` pushes a new `ContextStore` into AsyncLocalStorage before calling
 `fn()`, so any nested `logTask()`/`log()` calls inside `fn()` auto-nest
@@ -267,17 +270,16 @@ export async function logTask(title, fnOrOptions, maybeFn?) {
   if (options) {
     const sessionKeys = [
       "mode",
-      "tailLines",
       "tickInterval",
       "output",
-      "spinner",
     ];
     const hasSessionOptions = sessionKeys.some((k) => k in options);
     if (hasSessionOptions) {
       throw new Error(
-        "Session options (mode, tailLines, tickInterval, output, spinner) are only " +
+        "Session options (mode, tickInterval, output) are only " +
           "allowed at the top level. Nested logTask() calls inherit the session " +
-          "from their parent. Per-task options (map, filter) are allowed at any level.",
+          "from their parent. Per-task options (tailLines, spinner, map, filter) " +
+          "are allowed at any level.",
       );
     }
   }
@@ -826,8 +828,6 @@ export type Spinner = {
 export type SessionOptions = {
   /** Force TTY or plain mode. Default: "auto" (detect via isTTY). */
   mode?: "tty" | "plain" | "auto";
-  /** Number of log tail lines to show per task. Default: 6. */
-  tailLines?: number;
   /** Render tick interval in ms. Default: 150. */
   tickInterval?: number;
   /**
@@ -836,16 +836,20 @@ export type SessionOptions = {
    * When mode is "plain", any Writable with write() works.
    */
   output?: WriteStream | { write(s: string): boolean };
-  /**
-   * Spinner for running tasks. Default: dots spinner
-   * (`{ interval: 80, frames: ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"] }`)
-   * from cli-spinners.
-   * Pass any object matching `Spinner`, e.g. from the `cli-spinners` package.
-   */
-  spinner?: Spinner;
 };
 
 export type TaskOptions = {
+  /** Number of log tail lines to show for this task. Default: 6.
+   * Child tasks inherit from the nearest ancestor that sets this. */
+  tailLines?: number;
+  /**
+   * Spinner for this running task. Default: dots spinner
+   * (`{ interval: 80, frames: ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"] }`)
+   * from cli-spinners.
+   * Pass any object matching `Spinner`, e.g. from the `cli-spinners` package.
+   * Child tasks inherit from the nearest ancestor that sets this.
+   */
+  spinner?: Spinner;
   /**
    * Transform each log line before display. Applied at display time only —
    * original lines are preserved in logLines[] for error dumps.
