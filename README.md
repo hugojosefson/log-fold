@@ -51,25 +51,25 @@ import { log, logTask } from "@hugojosefson/log-fold";
 await logTask("All", async () => {
   await logTask("Install dependencies", async () => {
     log("npm install...");
-    await new Promise((r) => setTimeout(r, 500));
-    log("added 247 packages in 0.5s");
+    await new Promise((r) => setTimeout(r, 5000));
+    log("added 247 packages");
   });
 
   // Concurrent tasks
   await Promise.all([
     logTask("Compile TypeScript", async () => {
       log("tsc --build");
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 3000));
     }),
     logTask("Lint", async () => {
       log("eslint src/");
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 2000));
     }),
   ]);
 
   await logTask("Test", async () => {
     log("running 42 tests...");
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 4000));
     log("42 tests passed");
   });
 });
