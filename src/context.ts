@@ -37,38 +37,64 @@ function taskHandle(
   };
 }
 
+/** Shared run-and-finalize logic for both top-level and nested tasks. */
+async function runTask<T>(
+  node: TaskNode,
+  session: Session,
+  fn: () => T | Promise<T>,
+  handleOptions?: { stopRenderer?: boolean },
+): Promise<T> {
+  startTask(node);
+  session.renderer.onTaskStart(node);
+
+  await using _handle = taskHandle(node, session, handleOptions);
+  try {
+    const result = await storage.run(
+      { session, node },
+      () => Promise.resolve(fn()),
+    );
+    if (node.status === "running") {
+      succeedTask(node);
+    }
+    return result;
+  } catch (e) {
+    failTask(node, e instanceof Error ? e : new Error(String(e)));
+    throw e;
+  }
+}
+
 /**
  * Create and run a task. If called inside an existing task, nests as a child.
  * If called at the top level (no active context), auto-initializes a session
  * with default options.
  */
-export async function logTask<T>(
+export function logTask<T>(
   fn: () => T | Promise<T>,
 ): Promise<T>;
-export async function logTask<T>(
+export function logTask<T>(
   options: TaskOptions,
   fn: () => T | Promise<T>,
 ): Promise<T>;
-export async function logTask<T>(
+export function logTask<T>(
   options: SessionOptions & TaskOptions,
   fn: () => T | Promise<T>,
 ): Promise<T>;
-export async function logTask<T>(
+export function logTask<T>(
   title: string | undefined,
   fn: () => T | Promise<T>,
 ): Promise<T>;
-export async function logTask<T>(
+export function logTask<T>(
   title: string | undefined,
   options: TaskOptions,
   fn: () => T | Promise<T>,
 ): Promise<T>;
-export async function logTask<T>(
+export function logTask<T>(
   title: string | undefined,
   options: SessionOptions & TaskOptions,
   fn: () => T | Promise<T>,
 ): Promise<T>;
 
-export async function logTask<T>(
+export function logTask<T>(
   titleOrFnOrOptions:
     | string
     | undefined
@@ -99,27 +125,8 @@ export async function logTask<T>(
       options as TaskOptions | undefined,
     );
     session.root = root;
-    startTask(root);
     session.renderer.start(session.root);
-    session.renderer.onTaskStart(root);
-
-    await using _handle = taskHandle(root, session, { stopRenderer: true });
-    try {
-      const result = await storage.run(
-        { session, node: root },
-        () => Promise.resolve(fn()),
-      );
-      // Respect warn/skip set during execution
-      if (root.status === "running") {
-        succeedTask(root);
-      }
-      return result;
-    } catch (e) {
-      failTask(root, e instanceof Error ? e : new Error(String(e)));
-      throw e;
-    }
-    // _handle[Symbol.asyncDispose]() runs automatically:
-    // sets finishedAt, calls onTaskEnd, stops renderer
+    return runTask(root, session, fn, { stopRenderer: true });
   }
 
   if (options) {
@@ -146,26 +153,7 @@ export async function logTask<T>(
     parent,
     options as TaskOptions | undefined,
   );
-  startTask(child);
-  session.renderer.onTaskStart(child);
-
-  await using _handle = taskHandle(child, session);
-  try {
-    const result = await storage.run(
-      { session, node: child },
-      () => Promise.resolve(fn()),
-    );
-    // Respect warn/skip set during execution
-    if (child.status === "running") {
-      succeedTask(child);
-    }
-    return result;
-  } catch (e) {
-    failTask(child, e instanceof Error ? e : new Error(String(e)));
-    throw e;
-  }
-  // _handle[Symbol.asyncDispose]() runs automatically:
-  // sets finishedAt, calls onTaskEnd
+  return runTask(child, session, fn);
 }
 
 function resolveLogTaskArgs<T>(
