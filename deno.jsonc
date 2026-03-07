@@ -10,8 +10,8 @@
   "tasks": {
     "default": "       deno fmt && deno lint --fix && (deno check & deno task test) && deno task readme",
     "all": "           deno task default && deno publish --dry-run",
-    "test": "          deno test --parallel --trace-leaks --coverage",
-    "dev": "           deno test --parallel --trace-leaks --watch",
+    "test": "          deno test --allow-env --allow-run --allow-read --parallel --trace-leaks --coverage",
+    "dev": "           deno test --allow-env --allow-run --allow-read --parallel --trace-leaks --watch",
     "coverage": "      deno coverage",
     "readme": "        touch README.md && chmod +w README.md && ./readme/generate-readme.ts readme/README.md > README.md && deno fmt README.md; chmod -w README.md",
     "git-is-clean": "  test -z \"$(git status --porcelain)\"",
