@@ -247,11 +247,9 @@ export function countTasks(
 
 /** Total bytes of log output for a node. */
 export function logBytes(node: TaskNode): number {
-  let bytes = 0;
-  for (const line of node.logLines) {
-    bytes += line.length;
-  }
-  return bytes;
+  return node.logLines
+    .map((line) => line.length)
+    .reduce((a: number, b: number) => a + b, 0);
 }
 
 /** Get the chain of ancestors from root down to the given node (inclusive). */
