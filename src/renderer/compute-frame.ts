@@ -25,7 +25,9 @@ export type Frame = {
 /** Truncate a string to fit within `maxWidth` visual columns, appending `…` if truncated. */
 function truncateLine(line: string, maxWidth: number): string {
   const width = stringWidth(line);
-  if (width <= maxWidth) return line;
+  if (width <= maxWidth) {
+    return line;
+  }
 
   // Walk characters, accumulating visual width
   let result = "";
@@ -163,14 +165,20 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
 
   // Calculate available viewport lines
   let free = termHeight - taskLines.length - 2;
-  if (free < 0) free = 0;
+  if (free < 0) {
+    free = 0;
+  }
 
   // Assign tail windows greedily
   const tailAssignments: { node: TaskNode; lines: number }[] = [];
   for (const { node } of ranked) {
-    if (free <= 0) break;
+    if (free <= 0) {
+      break;
+    }
     const maxTail = node.tailLines;
-    if (maxTail === 0) continue;
+    if (maxTail === 0) {
+      continue;
+    }
     const cost = maxTail + 1; // tail lines + visual padding
     if (cost <= free) {
       tailAssignments.push({ node, lines: maxTail });
@@ -208,7 +216,9 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
       return;
     }
 
-    if (node.status === "pending") return;
+    if (node.status === "pending") {
+      return;
+    }
 
     // Emit the task line
     if (taskLineIndex < taskLines.length) {
@@ -267,6 +277,8 @@ function fitViewport(
   _termWidth: number,
 ): string[] {
   // Simple truncation: take the last maxHeight lines to keep recent/running tasks visible
-  if (lines.length <= maxHeight) return lines;
+  if (lines.length <= maxHeight) {
+    return lines;
+  }
   return lines.slice(lines.length - maxHeight);
 }

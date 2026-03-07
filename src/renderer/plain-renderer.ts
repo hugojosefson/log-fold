@@ -22,7 +22,9 @@ export function createPlainRenderer(
     for (let i = 0; i < chain.length; i++) {
       const n = chain[i];
       // Title-less tasks omitted from ancestor path
-      if (n.title === undefined) continue;
+      if (n.title === undefined) {
+        continue;
+      }
 
       let part = n.title;
       // Root task includes (C/N) progress count
@@ -38,16 +40,24 @@ export function createPlainRenderer(
 
   return {
     onTaskStart(node: TaskNode): void {
-      if (stopped) return;
+      if (stopped) {
+        return;
+      }
       // Only show start for titled tasks
-      if (node.title === undefined) return;
+      if (node.title === undefined) {
+        return;
+      }
       output.write(`${prefix(node)} => started\n`);
     },
 
     onTaskEnd(node: TaskNode): void {
-      if (stopped) return;
+      if (stopped) {
+        return;
+      }
       // Only show end for titled tasks
-      if (node.title === undefined) return;
+      if (node.title === undefined) {
+        return;
+      }
 
       const ms = durationMillis(node);
       const duration = ms !== undefined ? formatDuration(ms) : "";
@@ -73,7 +83,9 @@ export function createPlainRenderer(
     },
 
     onLog(node: TaskNode, line: string): void {
-      if (stopped) return;
+      if (stopped) {
+        return;
+      }
       // Find the nearest titled ancestor for the prefix
       const prefixNode = node.title !== undefined ? node : findTitledAncestor(
         node,
@@ -88,12 +100,16 @@ export function createPlainRenderer(
     },
 
     start(rootNode: TaskNode): void {
-      if (stopped) return;
+      if (stopped) {
+        return;
+      }
       root = rootNode;
     },
 
     stop(): void {
-      if (stopped) return;
+      if (stopped) {
+        return;
+      }
       stopped = true;
     },
   };
@@ -103,7 +119,9 @@ export function createPlainRenderer(
 function findTitledAncestor(node: TaskNode): TaskNode | undefined {
   let current: TaskNode | undefined = node;
   while (current) {
-    if (current.title !== undefined) return current;
+    if (current.title !== undefined) {
+      return current;
+    }
     current = current.parent;
   }
   return undefined;
@@ -116,7 +134,9 @@ function dumpFailLog(
 ): void {
   // Only dump for leaf failures (no failed children)
   const hasFailedChild = node.children.some((c) => c.status === "fail");
-  if (hasFailedChild) return;
+  if (hasFailedChild) {
+    return;
+  }
 
   // Log lines through composedFlatMap
   for (const rawLine of node.logLines) {

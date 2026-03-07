@@ -22,7 +22,9 @@ export function createTtyRenderer(
   const displayCounts = new WeakMap<TaskNode, number>();
 
   function render(): void {
-    if (!root || stopped) return;
+    if (!root || stopped) {
+      return;
+    }
 
     const termWidth = output.columns || 80;
     const termHeight = output.rows || 24;
@@ -52,7 +54,9 @@ export function createTtyRenderer(
   }
 
   function renderFinal(): void {
-    if (!root) return;
+    if (!root) {
+      return;
+    }
 
     const termWidth = output.columns || 80;
 
@@ -94,7 +98,9 @@ export function createTtyRenderer(
       // TtyRenderer ignores — reads tree on tick
     },
     start(rootNode: TaskNode): void {
-      if (stopped) return;
+      if (stopped) {
+        return;
+      }
       root = rootNode;
       timer = setInterval(render, tickInterval);
       // Unref so the timer doesn't keep the process alive
@@ -106,7 +112,9 @@ export function createTtyRenderer(
       }
     },
     stop(): void {
-      if (stopped) return;
+      if (stopped) {
+        return;
+      }
       stopped = true;
       if (timer !== undefined) {
         clearInterval(timer);
@@ -121,7 +129,9 @@ export function createTtyRenderer(
 function findLeafFailures(root: TaskNode): TaskNode[] {
   const leaves: TaskNode[] = [];
   for (const { node } of walkTree(root)) {
-    if (node.status !== "fail") continue;
+    if (node.status !== "fail") {
+      continue;
+    }
     const hasFailedChild = node.children.some((c) => c.status === "fail");
     if (!hasFailedChild) {
       leaves.push(node);

@@ -23,6 +23,10 @@
     "release:tag": "   git tag $(deno task version)",
     "release:push": "  git push origin main $(deno task version)"
   },
+  "fmt": {
+    "useBraces": "always",
+    "singleBodyPosition": "nextLine"
+  },
   "lock": false,
   "imports": {
     "@std/assert": "jsr:@std/assert@^1.0.19",

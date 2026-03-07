@@ -108,7 +108,9 @@ export function createTaskNode(
   if (localMap && localFilter) {
     composedFlatMap = (line: string): string[] => {
       const mapped = localMap(line);
-      if (!localFilter(mapped)) return [];
+      if (!localFilter(mapped)) {
+        return [];
+      }
       return parentFlatMap(mapped);
     };
   } else if (localMap) {
@@ -117,7 +119,9 @@ export function createTaskNode(
     };
   } else if (localFilter) {
     composedFlatMap = (line: string): string[] => {
-      if (!localFilter(line)) return [];
+      if (!localFilter(line)) {
+        return [];
+      }
       return parentFlatMap(line);
     };
   } else {
@@ -183,7 +187,9 @@ export function tailLogLines(node: TaskNode, n: number): string[] {
  * Returns elapsed ms for running/completed tasks, undefined for pending.
  */
 export function durationMillis(node: TaskNode): number | undefined {
-  if (node.startedAt === undefined) return undefined;
+  if (node.startedAt === undefined) {
+    return undefined;
+  }
   const end = node.finishedAt ?? Date.now();
   return end - node.startedAt;
 }
@@ -203,7 +209,9 @@ export function* walkTree(
 export function findRunningLeaves(root: TaskNode): TaskNode[] {
   const leaves: TaskNode[] = [];
   for (const { node } of walkTree(root)) {
-    if (node.status !== "running") continue;
+    if (node.status !== "running") {
+      continue;
+    }
     const hasRunningChild = node.children.some((c) => c.status === "running");
     if (!hasRunningChild) {
       leaves.push(node);
@@ -223,7 +231,9 @@ export function countTasks(
   let total = 0;
   let completed = 0;
   for (const { node } of walkTree(root)) {
-    if (node.title === undefined) continue;
+    if (node.title === undefined) {
+      continue;
+    }
     total++;
     if (
       node.status === "success" || node.status === "warning" ||

@@ -127,9 +127,13 @@ function hasAsyncIterator(
 function isStreamPair(input: unknown): input is StreamPair {
   const obj = input as Record<string, unknown>;
   const hasStreams = "stdout" in obj || "stderr" in obj;
-  if (!hasStreams) return false;
+  if (!hasStreams) {
+    return false;
+  }
   // Exclude objects that are themselves streams
-  if (hasPipe(input) || hasGetReader(input)) return false;
+  if (hasPipe(input) || hasGetReader(input)) {
+    return false;
+  }
   return true;
 }
 
@@ -143,6 +147,8 @@ function toNodeReadable(
 
 /** Convert an AnyReadable to a Node.js Readable. */
 function toReadable(stream: AnyReadable): Readable {
-  if (hasPipe(stream)) return stream;
+  if (hasPipe(stream)) {
+    return stream;
+  }
   return toNodeReadable(stream as ReadableStream<Uint8Array>);
 }

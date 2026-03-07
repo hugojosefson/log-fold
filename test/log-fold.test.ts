@@ -215,7 +215,9 @@ Deno.test({
           "fast error",
         );
         // Clean up orphaned timer to avoid leak detection
-        if (timerId !== undefined) clearTimeout(timerId);
+        if (timerId !== undefined) {
+          clearTimeout(timerId);
+        }
 
         // The test passes if the error propagates correctly
         // Orphaned sibling tasks remain in running status (per design)

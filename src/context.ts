@@ -132,7 +132,9 @@ export async function logTask<T>(
         () => Promise.resolve(fn()),
       );
       // Respect warn/skip set during execution
-      if (root.status === "running") succeedTask(root);
+      if (root.status === "running") {
+        succeedTask(root);
+      }
       return result;
     } catch (e) {
       failTask(root, e instanceof Error ? e : new Error(String(e)));
@@ -176,7 +178,9 @@ export async function logTask<T>(
       () => Promise.resolve(fn()),
     );
     // Respect warn/skip set during execution
-    if (child.status === "running") succeedTask(child);
+    if (child.status === "running") {
+      succeedTask(child);
+    }
     return result;
   } catch (e) {
     failTask(child, e instanceof Error ? e : new Error(String(e)));
