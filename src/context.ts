@@ -80,33 +80,11 @@ export async function logTask<T>(
     | (SessionOptions & TaskOptions),
   maybeFn?: () => T | Promise<T>,
 ): Promise<T> {
-  // Overload dispatch: resolve (title, options, fn)
-  let title: string | undefined;
-  let options: Record<string, unknown> | undefined;
-  let fn: () => T | Promise<T>;
-
-  if (typeof titleOrFnOrOptions === "function") {
-    // logTask(fn)
-    title = undefined;
-    fn = titleOrFnOrOptions;
-  } else if (
-    typeof titleOrFnOrOptions === "object" &&
-    titleOrFnOrOptions !== null
-  ) {
-    // logTask(options, fn)
-    title = undefined;
-    options = titleOrFnOrOptions as Record<string, unknown>;
-    fn = fnOrOptions as () => T | Promise<T>;
-  } else {
-    // logTask(title, ...) — title is string | undefined
-    title = titleOrFnOrOptions;
-    if (typeof fnOrOptions === "function") {
-      fn = fnOrOptions;
-    } else {
-      options = fnOrOptions as Record<string, unknown> | undefined;
-      fn = maybeFn as () => T | Promise<T>;
-    }
-  }
+  const { title, options, fn } = resolveLogTaskArgs(
+    titleOrFnOrOptions,
+    fnOrOptions,
+    maybeFn,
+  );
 
   const store = storage.getStore();
 
@@ -188,6 +166,54 @@ export async function logTask<T>(
   }
   // _handle[Symbol.asyncDispose]() runs automatically:
   // sets finishedAt, calls onTaskEnd
+}
+
+function resolveLogTaskArgs<T>(
+  titleOrFnOrOptions:
+    | string
+    | undefined
+    | (() => T | Promise<T>)
+    | (SessionOptions & TaskOptions),
+  fnOrOptions?:
+    | (() => T | Promise<T>)
+    | TaskOptions
+    | (SessionOptions & TaskOptions),
+  maybeFn?: () => T | Promise<T>,
+): {
+  title: string | undefined;
+  options: Record<string, unknown> | undefined;
+  fn: () => T | Promise<T>;
+} {
+  if (typeof titleOrFnOrOptions === "function") {
+    // logTask(fn)
+    return { title: undefined, options: undefined, fn: titleOrFnOrOptions };
+  }
+
+  if (
+    typeof titleOrFnOrOptions === "object" &&
+    titleOrFnOrOptions !== null
+  ) {
+    // logTask(options, fn)
+    return {
+      title: undefined,
+      options: titleOrFnOrOptions,
+      fn: fnOrOptions as () => T | Promise<T>,
+    };
+  }
+
+  // logTask(title, ...) — title is string | undefined
+  const title = titleOrFnOrOptions;
+  if (typeof fnOrOptions === "function") {
+    // logTask(title, fn)
+    return { title, options: undefined, fn: fnOrOptions };
+  }
+
+  // logTask(title, options, fn)
+  return {
+    title,
+    options: fnOrOptions as Record<string, unknown> | undefined,
+    fn: maybeFn as () => T | Promise<T>,
+  };
 }
 
 /**
