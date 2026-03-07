@@ -7,7 +7,7 @@ import {
   type TaskNode,
   walkTree,
 } from "../task-node.ts";
-import { computeFrame } from "./compute-frame.ts";
+import { computeFrame, type Frame } from "./compute-frame.ts";
 import { dumpNodeLogs } from "./dump-node-logs.ts";
 import type { Renderer } from "./renderer.ts";
 
@@ -27,31 +27,18 @@ export function createTtyRenderer(
       return;
     }
 
-    const termWidth = output.columns || 80;
-    const termHeight = output.rows || 24;
+    const frame = computeFrame(
+      root,
+      {
+        termWidth: output.columns || 80,
+        termHeight: output.rows || 24,
+        displayCounts,
+        now: Date.now(),
+      },
+    );
 
-    const frame = computeFrame(root, {
-      termWidth,
-      termHeight,
-      displayCounts,
-      now: Date.now(),
-    });
-
-    // Cursor strategy
-    if (previousLineCount > 0) {
-      output.moveCursor(0, -previousLineCount);
-    }
-    output.cursorTo(0);
-    output.write(hideCursor);
-
-    for (const line of frame.lines) {
-      output.clearLine(0);
-      output.write(line + "\n");
-    }
-
-    output.clearScreenDown();
+    writeFrame(previousLineCount, output, frame);
     previousLineCount = frame.lines.length;
-    output.write(showCursor);
   }
 
   function renderFinal(): void {
@@ -59,33 +46,22 @@ export function createTtyRenderer(
       return;
     }
 
-    const termWidth = output.columns || 80;
-
     // Final frame with no height limit
-    const frame = computeFrame(root, {
-      termWidth,
-      termHeight: Infinity,
-      displayCounts,
-      now: Date.now(),
-    });
+    const frame = computeFrame(
+      root,
+      {
+        termWidth: output.columns || 80,
+        termHeight: Infinity,
+        displayCounts,
+        now: Date.now(),
+      },
+    );
 
     // Overwrite the last frame
-    if (previousLineCount > 0) {
-      output.moveCursor(0, -previousLineCount);
-    }
-    output.cursorTo(0);
-    output.write(hideCursor);
-
-    for (const line of frame.lines) {
-      output.clearLine(0);
-      output.write(line + "\n");
-    }
-
-    output.clearScreenDown();
-    output.write(showCursor);
+    writeFrame(previousLineCount, output, frame);
 
     // Dump full logs for leaf failures
-    dumpFailedLeafLogs(root, output, termWidth);
+    dumpFailedLeafLogs(root, output, output.columns || 80);
   }
 
   return {
@@ -124,6 +100,26 @@ export function createTtyRenderer(
       renderFinal();
     },
   };
+}
+
+function writeFrame(
+  previousLineCount: number,
+  output: WriteStream,
+  frame: Frame,
+): void {
+  if (previousLineCount > 0) {
+    output.moveCursor(0, -previousLineCount);
+  }
+  output.cursorTo(0);
+  output.write(hideCursor);
+
+  for (const line of frame.lines) {
+    output.clearLine(0);
+    output.write(line + "\n");
+  }
+
+  output.clearScreenDown();
+  output.write(showCursor);
 }
 
 /** Find leaf failures (failed nodes with no failed children). */
