@@ -6,6 +6,14 @@ export {
   setCurrentTaskWarning,
 } from "./src/context.ts";
 
+// Stream piping
+export { logFromStream } from "./src/log-from-stream.ts";
+export type {
+  AnyReadable,
+  LogFromStreamInput,
+  StreamPair,
+} from "./src/log-from-stream.ts";
+
 // Types
 export type { SessionOptions, Spinner, TaskOptions } from "./src/session.ts";
 export type { TaskNode, TaskStatus } from "./src/task-node.ts";
