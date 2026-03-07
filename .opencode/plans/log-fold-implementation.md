@@ -739,7 +739,7 @@ Each render cycle produces a list of output lines:
 There is no separate header line. The aggregate progress count (completed/total)
 is shown on the root task's running line (see Step 2).
 
-###### Step 2 — task lines (recursive)
+###### Step 1 — task lines (recursive)
 
 Walk the task tree depth-first. For each node at a given `depth`:
 
@@ -754,8 +754,10 @@ Walk the task tree depth-first. For each node at a given `depth`:
 | `pending`         | not shown                                                  | —                  |
 
 `<frame>` is the current spinner frame (cycled using
-`frames[Math.floor(now / interval) % frames.length]`). The default spinner is
-the braille dots pattern from `cli-spinners`.
+`frames[Math.floor(now / spinner.interval) % frames.length]`). The spinner
+animation is decoupled from the render tick — it uses the spinner's own
+`interval` property (default 80ms for dots), not `tickInterval` (150ms). The
+default spinner is the braille dots pattern from `cli-spinners`.
 
 Colors are applied using `@std/fmt/colors`:
 
@@ -781,7 +783,7 @@ simultaneously. Each running child is shown expanded (its own line + its
 children). Completed siblings are shown collapsed. This is exactly what buildkit
 does — all started jobs appear; running ones get expanded subtrees.
 
-###### Step 3 — log tail windows (competitive allocation)
+###### Step 2 — log tail windows (competitive allocation)
 
 Following buildkit's `setupTerminals()` approach:
 
@@ -806,7 +808,7 @@ Tail lines rendered dimmed, prefixed with the task's indent + `│`:
 │ added 247 packages in 3.1s
 ```
 
-###### Step 4 — viewport fitting
+###### Step 3 — viewport fitting
 
 If the total frame exceeds terminal height:
 
@@ -899,7 +901,10 @@ export type Spinner = {
 export type SessionOptions = {
   /** Force TTY or plain mode. Default: "auto" (detect via isTTY). */
   mode?: "tty" | "plain" | "auto";
-  /** Render tick interval in ms. Default: 150. */
+  /** Render tick interval in ms. Default: 150.
+   * This controls how often the frame is re-rendered (dirty flag check, duration
+   * timers update). Spinner animation is independent — it uses the spinner's own
+   * interval property (typically 80ms), not tickInterval. */
   tickInterval?: number;
   /**
    * Output stream. Default: process.stderr.
