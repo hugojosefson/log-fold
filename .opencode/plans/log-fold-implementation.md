@@ -15,20 +15,20 @@ nested units of work benefits.
 
 ## Design decisions (confirmed)
 
-| Decision               | Choice                                                                                                                                                                                                                                          |
-| :--------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| API style              | Single `logTask()` function with AsyncLocalStorage-based implicit context. Auto-inits on first call; accepts optional config via options argument (top-level only — throws if passed to nested calls). Callbacks can be sync or async (`() => T |
-| Log tail               | Keep full log buffer, display last N lines in tail window. Print full log on error                                                                                                                                                              |
-| VT100 emulation        | Skip for now; design the log buffer so a VT100 parser can plug in later                                                                                                                                                                         |
-| Subprocess integration | `logFromStream()` accepts Node.js `Readable`, web `ReadableStream`, arrays, or `{ stdout, stderr }` objects (covers `node:child_process`, `Deno.Command`, `Bun.spawn`). `runCommand()` wraps `node:child_process` as convenience                |
-| Runtime                | Runtime-agnostic via `node:` built-in modules (`node:tty`, `node:process`, `node:async_hooks`, `node:child_process`). No Deno-specific APIs                                                                                                     |
-| Dependencies           | `jsr:@std/fmt` (includes colors) + `npm:cli-spinners` + `node:` built-ins                                                                                                                                                                       |
-| Colors support         | Delegates to `jsr:@std/fmt/colors` which auto-checks `NO_COLOR` env var. No override option — users control colors via `NO_COLOR` environment variable                                                                                          |
-| Terminal control       | `node:tty` `WriteStream` methods (`cursorTo`, `moveCursor`, `clearLine`, `clearScreenDown`) instead of hand-written ANSI escapes. Only cursor hide/show requires raw ANSI                                                                       |
-| Unicode                | Unicode symbols only (`✓`, `✗`, `⚠`, `⊘`, `│`), no ASCII fallback. Running tasks use a configurable spinner (default: dots from cli-spinners)                                                                                                   |
-| Colors                 | Buildkit-style: cyan for completed, red for errors, yellow for warnings, dim for skipped                                                                                                                                                        |
-| Exports                | Submodule exports in `deno.jsonc`                                                                                                                                                                                                               |
-| Concurrency            | Support multiple children running simultaneously under one parent                                                                                                                                                                               |
+| Decision               | Choice                                                                                                                                                                                                                                                                                              |
+| :--------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| API style              | Single `logTask()` function with AsyncLocalStorage-based implicit context. Auto-inits on first call; accepts optional config via options argument (top-level only — throws if passed to nested calls). Callbacks can be sync or async (`() => T \| Promise<T>`). Return type is always `Promise<T>` |
+| Log tail               | Keep full log buffer, display last N lines in tail window. Print full log on error                                                                                                                                                                                                                  |
+| VT100 emulation        | Skip for now; design the log buffer so a VT100 parser can plug in later                                                                                                                                                                                                                             |
+| Subprocess integration | `logFromStream()` accepts Node.js `Readable`, web `ReadableStream`, arrays, or `{ stdout, stderr }` objects (covers `node:child_process`, `Deno.Command`, `Bun.spawn`). `runCommand()` wraps `node:child_process` as convenience                                                                    |
+| Runtime                | Runtime-agnostic via `node:` built-in modules (`node:tty`, `node:process`, `node:async_hooks`, `node:child_process`). No Deno-specific APIs                                                                                                                                                         |
+| Dependencies           | `jsr:@std/fmt` (includes colors) + `npm:cli-spinners` + `node:` built-ins                                                                                                                                                                                                                           |
+| Colors support         | Delegates to `jsr:@std/fmt/colors` which auto-checks `NO_COLOR` env var. No override option — users control colors via `NO_COLOR` environment variable                                                                                                                                              |
+| Terminal control       | `node:tty` `WriteStream` methods (`cursorTo`, `moveCursor`, `clearLine`, `clearScreenDown`) instead of hand-written ANSI escapes. Only cursor hide/show requires raw ANSI                                                                                                                           |
+| Unicode                | Unicode symbols only (`✓`, `✗`, `⚠`, `⊘`, `│`), no ASCII fallback. Running tasks use a configurable spinner (default: dots from cli-spinners)                                                                                                                                                       |
+| Colors                 | Buildkit-style: cyan for completed, red for errors, yellow for warnings, dim for skipped                                                                                                                                                                                                            |
+| Exports                | Submodule exports in `deno.jsonc`                                                                                                                                                                                                                                                                   |
+| Concurrency            | Support multiple children running simultaneously under one parent                                                                                                                                                                                                                                   |
 
 ## Architecture
 
@@ -37,8 +37,8 @@ src/
 ├── ansi.ts               # Cursor hide/show constants (only what node:tty lacks)
 ├── task-node.ts          # TaskNode data model, tree operations
 ├── storage.ts            # AsyncLocalStorage instance + ContextStore type
-├── session.ts            # Internal Session class (owns roots[], renderer)
-├── context.ts            # Module-level logTask/log/logFromStream etc. (imports storage + session)
+├── session.ts            # Internal Session class (owns root, renderer)
+├── context.ts            # Module-level logTask/log/setCurrentTask* (imports storage + session)
 ├── log-from-stream.ts    # logFromStream — pipe streams into current task's log
 ├── run-command.ts        # Optional subprocess wrapper (node:child_process)
 ├── renderer/
@@ -87,11 +87,11 @@ Already partially written. Core types and operations:
 
 - `TaskStatus`:
   `"pending" | "running" | "success" | "warning" | "fail" | "skipped"`
-- `TaskNode` interface: `id`, `title` (mutable — needed for `setTitle()`),
-  `status`, `parent`, `children[]`, `logLines[]`, `error`, `startedAt`,
-  `finishedAt`, `tailLines?`, `spinner?`, `composedFlatMap?` (per-task display
-  options — stored on the node so `computeFrame()` can access them without
-  walking the ancestor chain on every render tick; see below)
+- `TaskNode` interface: `title` (mutable — needed for `setTitle()`), `status`,
+  `parent`, `children[]`, `logLines[]`, `error`, `startedAt`, `finishedAt`,
+  `tailLines?`, `spinner?`, `composedFlatMap?` (per-task display options —
+  stored on the node so `computeFrame()` can access them without walking the
+  ancestor chain on every render tick; see below)
 - `createTaskNode(title, parent?, taskOptions?)` — factory, appends to parent's
   `children[]`. Computes and stores `composedFlatMap` at creation time by
   composing the task's own `map`/`filter` with the parent's `composedFlatMap`:
@@ -109,17 +109,18 @@ Already partially written. Core types and operations:
 - `durationSec(node)` — returns `finishedAt - startedAt` for
   completed/failed/warned/skipped tasks, `Date.now() - startedAt` for running
   tasks, `undefined` for pending tasks
-- `walkTree(roots)` — depth-first generator yielding `{ node, depth }`
+- `walkTree(root)` — depth-first generator yielding `{ node, depth }`, starting
+  from the given root
 - `ancestorChain(node)` — path from root to given node
 
 Additional functions needed for concurrency:
 
 ```typescript
 /** Find all currently-running leaf nodes (no running children). */
-function findRunningLeaves(roots: TaskNode[]): TaskNode[];
+function findRunningLeaves(root: TaskNode): TaskNode[];
 
 /** Count total tasks and completed tasks in the tree. */
-function countTasks(roots: TaskNode[]): { total: number; completed: number };
+function countTasks(root: TaskNode): { total: number; completed: number };
 
 /** Total bytes of log output for a node (for activity ranking). */
 function logBytes(node: TaskNode): number;
@@ -231,9 +232,11 @@ Design choices for "outside context" behavior:
 | `logFromStream()` (log-from-stream.ts) | Falls back to piping lines to `process.stderr` via `log()` — output is never lost              |
 
 Sequential top-level `logTask()` calls (outside any context) each create their
-own independent render session. Each session starts and stops its own renderer.
-To unify multiple top-level tasks under one session, wrap them in an outer
-`logTask()`.
+own independent render session. Each session starts and stops its own renderer
+(including cursor hide/show and independent progress counts). For scripts with
+multiple sequential top-level tasks, this means multiple independent render
+cycles. To unify multiple top-level tasks under one session with shared progress
+tracking, wrap them in an outer `logTask()`.
 
 Passing session options (mode, tickInterval, output) to a nested `logTask()`
 (inside an existing context) throws an error — these options only apply at the
@@ -267,9 +270,9 @@ export async function logTask(title, fnOrOptions, maybeFn?) {
     // Top-level call — auto-init a session with defaults (or provided options)
     const session = new Session(options);
     const root = createTaskNode(title, undefined, options);
-    session.roots.push(root);
+    session.root = root;
     startTask(root);
-    session.renderer.start(session.roots);
+    session.renderer.start(session.root);
     session.renderer.onTaskStart(root);
 
     try {
@@ -656,7 +659,7 @@ type Renderer = {
    *  (it polls on tick). PlainRenderer writes the line immediately. */
   onLog(node: TaskNode, line: string): void;
   /** Start the render loop. */
-  start(roots: TaskNode[]): void;
+  start(root: TaskNode): void;
   /** Stop the render loop, render final state, dump error logs. */
   stop(): void;
 };
@@ -670,9 +673,9 @@ they need all branches to complete before the parent fails. Any tasks still in
 does not modify task state. Handling orphaned running tasks (cancellation,
 aborting) is deferred to a future version (see "Cancellation" section).
 
-The renderer receives the `roots: TaskNode[]` reference on `start()` and reads
-the tree directly on each render tick. The `onTaskStart`/`onTaskEnd` callbacks
-serve as dirty-flag triggers, not data carriers. The `onLog` callback is used by
+The renderer receives the `root: TaskNode` reference on `start()` and reads the
+tree directly on each render tick. The `onTaskStart`/`onTaskEnd` callbacks serve
+as dirty-flag triggers, not data carriers. The `onLog` callback is used by
 PlainRenderer to write log lines immediately as they arrive; TtyRenderer ignores
 it (new log output is picked up on the next tick-based render frame).
 
@@ -693,21 +696,25 @@ it (new log output is picked up on the next tick-based render frame).
   (so duration timers update even without new events, and new log lines are
   picked up)
 - On `stop()`: one final frame with no height limit, then dump full log for any
-  failed tasks
+  failed tasks. The final frame shows failed tasks as collapsed single lines
+  (`✗ Task Name  ERROR  1.2s`). The full error log dump (ancestor path header +
+  all log lines + error/stack trace) appears below the final frame as permanent
+  non-overwritten output.
 
 ##### Frame computation
 
-Extracted into a pure function `computeFrame(roots, options)` returning
-`{ lines: string[], displayCounts: Map<string, number> }` so it's testable
+Extracted into a pure function `computeFrame(root, options)` returning
+`{ lines: string[], displayCounts: Map<TaskNode, number> }` so it's testable
 without a terminal. `options` includes `termWidth`, `termHeight`,
-`displayCounts: Map<string, number>`, and `now` (current timestamp, so tests can
-pass a fixed value and get deterministic spinner frames). Per-task `tailLines`,
-`spinner` and `composedFlatMap` are read from each `TaskNode` directly (resolved
-at task creation time). The `displayCounts` map is passed into `computeFrame`
-and a new copy is returned (tracks how many frames each node's tail has been
-shown, providing "stickiness" so the display doesn't thrash between tasks' log
-windows). The TtyRenderer persists this map as instance state, passing it into
-each `computeFrame()` call and updating it with the returned copy.
+`displayCounts: Map<TaskNode, number>`, and `now` (current timestamp, so tests
+can pass a fixed value and get deterministic spinner frames). Per-task
+`tailLines`, `spinner` and `composedFlatMap` are read from each `TaskNode`
+directly (resolved at task creation time). The `displayCounts` map is passed
+into `computeFrame` and a new copy is returned (tracks how many frames each
+node's tail has been shown, providing "stickiness" so the display doesn't thrash
+between tasks' log windows). The TtyRenderer persists this map as instance
+state, passing it into each `computeFrame()` call and updating it with the
+returned copy.
 
 Each render cycle produces a list of output lines:
 
@@ -763,9 +770,10 @@ Following buildkit's `setupTerminals()` approach:
 1. Collect all running leaves (nodes with `status === "running"`, no running
    children, and `logLines.length > 0`)
 2. Rank by activity: `logBytes + displayCount * 50` (where `displayCount` comes
-   from the `displayCounts` map passed into `computeFrame`, keyed by task ID —
-   tracks how many frames this node's tail has been shown, provides "stickiness"
-   so the display doesn't thrash between different tasks' log windows)
+   from the `displayCounts` map passed into `computeFrame`, keyed by `TaskNode`
+   reference — tracks how many frames this node's tail has been shown, provides
+   "stickiness" so the display doesn't thrash between different tasks' log
+   windows)
 3. Calculate available viewport lines: `free = termHeight - taskLines - 2`
 4. Each tail window costs `tailLines + 1` lines (the log lines plus visual
    padding)
@@ -823,7 +831,9 @@ plain renderer.
 
 #### Plain renderer — sequential text output
 
-For piped / non-TTY / CI output. No cursor movement, append-only.
+For piped / non-TTY / CI output. No cursor movement, append-only. PlainRenderer
+is purely event-driven — it writes output immediately via `onLog`,
+`onTaskStart`, and `onTaskEnd` callbacks. It does not use `computeFrame()`.
 
 - On task start: `[Parent > Child] => started` (full ancestor path prefix)
 - On log append: `[Parent > Child] line content`
@@ -883,6 +893,8 @@ export type SessionOptions = {
 
 export type TaskOptions = {
   /** Number of log tail lines to show for this task. Default: 6.
+   * Set to 0 to suppress the log tail window entirely, even when log
+   * lines exist (the task still shows its status line with spinner/timer).
    * Child tasks inherit from the nearest ancestor that sets this.
    * Resolved once at task creation by createTaskNode(). */
   tailLines?: number;
@@ -1404,7 +1416,8 @@ real-time observation of span events during execution — the log tail window
 3. `src/ansi.ts` — rewrite: keep only `hideCursor`/`showCursor` constants
 4. `src/task-node.ts` — update: add `warnTask`, `skipTask`, `setTitle`,
    `findRunningLeaves`, `countTasks`, `logBytes`; add `composedFlatMap?`,
-   `tailLines?`, `spinner?` fields to `TaskNode`;
+   `tailLines?`, `spinner?` fields to `TaskNode`; remove `id` field (use
+   `Map<TaskNode, number>` for displayCounts instead);
    `createTaskNode(title, parent?, taskOptions?)` composes map/filter into
    `composedFlatMap` at creation time; remove `findDeepestRunning` and
    `appendLogLines`; simplify `appendLog` to a single-line push (splitting moves
