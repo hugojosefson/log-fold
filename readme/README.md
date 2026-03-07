@@ -13,18 +13,28 @@ runtime-specific APIs.
 
 ## Requirements
 
-Requires [Deno](https://deno.com/) v2.7.4 or later.
+This library uses [AsyncLocalStorage](https://nodejs.org/api/async_context.html)
+for context management, which is available in:
 
-_...or..._
-
-- `/bin/sh`
-- `unzip`
-- `curl`
+- [Node.js 16.4.0+](https://nodejs.org/en/blog/release/v16.4.0) (stable since
+  June 2021)
+- [Deno 1.x](https://docs.deno.com/api/node/async_hooks/~/AsyncLocalStorage)
+  (via Node.js compatibility)
+- [Bun 1.0+](https://github.com/oven-sh/bun/pull/3089) (since September 2023)
 
 ## Installation
 
+To add `@hugojosefson/log-fold` to your **Node.js** or **Bun** project with a
+**`package.json`**, run:
+
 ```sh
-"@@include(./install.sh)";
+"@@include(./install-node-or-bun.sh)";
+```
+
+To add it to a **Deno** project, run:
+
+```sh
+"@@include(./install-deno.sh)";
 ```
 
 ## Usage
