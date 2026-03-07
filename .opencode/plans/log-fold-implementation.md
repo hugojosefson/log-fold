@@ -30,6 +30,14 @@ nested units of work benefits.
 | Exports                | Submodule exports in `deno.jsonc`                                                                                                                                                                                                                                                                   |
 | Concurrency            | Support multiple children running simultaneously under one parent                                                                                                                                                                                                                                   |
 
+## Coding conventions
+
+| Convention       | Rule                                                                                                                                                                                                                                              |
+| :--------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Types            | Prefer `type` over `interface` for all type definitions. Use `type` for object shapes, unions, and intersections. `interface` is never used                                                                                                       |
+| Immutability     | Prefer `const` over `let`. Use `let` only when reassignment is genuinely needed (e.g., loop counters where `const` iteration isn't possible)                                                                                                      |
+| Resource cleanup | Prefer `using`/`await using` (with `Symbol.dispose`/`Symbol.asyncDispose`) over `const` + `try`/`finally` for resource lifecycle management. `try`/`catch` is still used for error handling — `using` replaces only the cleanup/`finally` portion |
+
 ## Architecture
 
 ```
@@ -42,7 +50,7 @@ src/
 ├── log-from-stream.ts    # logFromStream — pipe streams into current task's log
 ├── run-command.ts        # Optional subprocess wrapper (node:child_process)
 ├── renderer/
-│   ├── renderer.ts       # Renderer interface
+│   ├── renderer.ts       # Renderer type definition
 │   ├── compute-frame.ts  # computeFrame pure function + FrameOptions
 │   ├── tty-renderer.ts   # TtyRenderer (implements Renderer)
 │   └── plain-renderer.ts # PlainRenderer (implements Renderer)
@@ -87,7 +95,7 @@ Already partially written. Core types and operations:
 
 - `TaskStatus`:
   `"pending" | "running" | "success" | "warning" | "fail" | "skipped"`
-- `TaskNode` interface: `title` (mutable — needed for `setTitle()`), `status`,
+- `TaskNode` type: `title` (mutable — needed for `setTitle()`), `status`,
   `parent`, `children[]`, `logLines[]`, `error`, `startedAt`, `finishedAt`,
   `tailLines?`, `spinner?`, `composedFlatMap?` (per-task display options —
   stored on the node so `computeFrame()` can access them without walking the
@@ -195,9 +203,9 @@ export function log(text: string): void;
 /**
  * Mark the current task as completed with warnings.
  * Sets status to "warning" without setting finishedAt (the task is still
- * running). When the logTask callback returns, the finally block sets
- * finishedAt and the status is preserved as "warning" instead of being
- * overridden to "success".
+ * running). When the logTask callback returns, the task handle's
+ * `[Symbol.asyncDispose]()` sets finishedAt and the status is preserved
+ * as "warning" instead of being overridden to "success".
  *
  * Implementation: sets node.status = "warning" directly — does NOT call
  * warnTask() (which would also set finishedAt prematurely).
@@ -207,9 +215,9 @@ export function setCurrentTaskWarning(): void;
 /**
  * Mark the current task as skipped. The logTask callback should return
  * immediately after calling this. Sets status to "skipped" without setting
- * finishedAt. When the logTask callback returns, the finally block sets
- * finishedAt and the status is preserved as "skipped" instead of being
- * overridden to "success".
+ * finishedAt. When the logTask callback returns, the task handle's
+ * `[Symbol.asyncDispose]()` sets finishedAt and the status is preserved
+ * as "skipped" instead of being overridden to "success".
  *
  * Implementation: sets node.status = "skipped" directly — does NOT call
  * skipTask() (which would also set finishedAt prematurely).
@@ -259,6 +267,25 @@ import {
   succeedTask,
 } from "./task-node.ts";
 
+/** Creates a disposable handle that finalizes a task node on dispose. */
+function taskHandle(
+  node: TaskNode,
+  session: Session,
+  options?: { stopRenderer?: boolean },
+): AsyncDisposable {
+  return {
+    async [Symbol.asyncDispose]() {
+      if (node.finishedAt === undefined) {
+        node.finishedAt = Date.now();
+      }
+      session.renderer.onTaskEnd(node);
+      if (options?.stopRenderer) {
+        session.renderer.stop();
+      }
+    },
+  };
+}
+
 export async function logTask(title, fnOrOptions, maybeFn?) {
   // Overload dispatch
   const options = typeof fnOrOptions === "function" ? undefined : fnOrOptions;
@@ -275,6 +302,7 @@ export async function logTask(title, fnOrOptions, maybeFn?) {
     session.renderer.start(session.root);
     session.renderer.onTaskStart(root);
 
+    await using _handle = taskHandle(root, session, { stopRenderer: true });
     try {
       const result = await storage.run(
         { session, node: root },
@@ -286,16 +314,9 @@ export async function logTask(title, fnOrOptions, maybeFn?) {
     } catch (e) {
       failTask(root, e instanceof Error ? e : new Error(String(e)));
       throw e;
-    } finally {
-      // Ensure finishedAt is set for all terminal statuses (warn/skip
-      // set status during execution but don't set finishedAt — the task
-      // is still running at that point)
-      if (root.finishedAt === undefined) {
-        root.finishedAt = Date.now();
-      }
-      session.renderer.onTaskEnd(root);
-      session.renderer.stop();
     }
+    // _handle[Symbol.asyncDispose]() runs automatically:
+    // sets finishedAt, calls onTaskEnd, stops renderer
   }
 
   if (options) {
@@ -321,6 +342,7 @@ export async function logTask(title, fnOrOptions, maybeFn?) {
   startTask(child);
   session.renderer.onTaskStart(child);
 
+  await using _handle = taskHandle(child, session);
   try {
     const result = await storage.run(
       { session, node: child },
@@ -332,13 +354,9 @@ export async function logTask(title, fnOrOptions, maybeFn?) {
   } catch (e) {
     failTask(child, e instanceof Error ? e : new Error(String(e)));
     throw e;
-  } finally {
-    // Ensure finishedAt is set for all terminal statuses
-    if (child.finishedAt === undefined) {
-      child.finishedAt = Date.now();
-    }
-    session.renderer.onTaskEnd(child);
   }
+  // _handle[Symbol.asyncDispose]() runs automatically:
+  // sets finishedAt, calls onTaskEnd
 }
 ```
 
@@ -605,9 +623,9 @@ import { log, logTask, setCurrentTaskTitle } from "@hugojosefson/log-fold";
 
 await logTask("Download", async () => {
   const files = await listFiles();
-  for (let i = 0; i < files.length; i++) {
+  for (const [i, file] of files.entries()) {
     setCurrentTaskTitle(`Download (${i + 1}/${files.length})`);
-    await downloadFile(files[i]);
+    await downloadFile(file);
   }
 });
 ```
@@ -644,10 +662,10 @@ await logTask(
 
 ### Layer 4: `src/renderer/` — rendering
 
-Two implementations behind a common interface, in separate files under
+Two implementations behind a common `Renderer` type, in separate files under
 `src/renderer/`.
 
-#### Renderer interface
+#### Renderer type
 
 ```typescript
 type Renderer = {
@@ -1422,10 +1440,10 @@ real-time observation of span events during execution — the log tail window
    `composedFlatMap` at creation time; remove `findDeepestRunning` and
    `appendLogLines`; simplify `appendLog` to a single-line push (splitting moves
    to `log()` in `context.ts`)
-5. `src/renderer/` — `renderer.ts` (interface with `onLog`), `compute-frame.ts`
-   (`computeFrame()` pure function), `tty-renderer.ts` (TTY renderer using
-   `node:tty` `WriteStream` methods, render loop, cursor strategy),
-   `plain-renderer.ts` (plain renderer with immediate `onLog` output)
+5. `src/renderer/` — `renderer.ts` (Renderer type with `onLog`),
+   `compute-frame.ts` (`computeFrame()` pure function), `tty-renderer.ts` (TTY
+   renderer using `node:tty` `WriteStream` methods, render loop, cursor
+   strategy), `plain-renderer.ts` (plain renderer with immediate `onLog` output)
 6. `src/storage.ts` — `AsyncLocalStorage` instance + `ContextStore` type.
    Type-only imports from this package (must come before `session.ts` since
    `session.ts` imports from it)
