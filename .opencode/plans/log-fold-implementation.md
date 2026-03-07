@@ -22,7 +22,7 @@ nested units of work benefits.
 | VT100 emulation        | Skip for now; design the log buffer so a VT100 parser can plug in later                                                                                                                                                                                                                             |
 | Subprocess integration | `logFromStream()` accepts Node.js `Readable`, web `ReadableStream`, arrays, or `{ stdout, stderr }` objects (covers `node:child_process`, `Deno.Command`, `Bun.spawn`). `runCommand()` wraps `node:child_process` as convenience                                                                    |
 | Runtime                | Runtime-agnostic via `node:` built-in modules (`node:tty`, `node:process`, `node:async_hooks`, `node:child_process`). No Deno-specific APIs                                                                                                                                                         |
-| Dependencies           | `jsr:@std/fmt` (includes colors) + `npm:cli-spinners` + `node:` built-ins                                                                                                                                                                                                                           |
+| Dependencies           | `jsr:@std/fmt` (includes colors) + `npm:cli-spinners` (runtime import — the default dots spinner is imported from `cli-spinners` at runtime, not hardcoded) + `node:` built-ins                                                                                                                     |
 | Colors support         | Delegates to `jsr:@std/fmt/colors` which auto-checks `NO_COLOR` env var. No override option — users control colors via `NO_COLOR` environment variable                                                                                                                                              |
 | Terminal control       | `node:tty` `WriteStream` methods (`cursorTo`, `moveCursor`, `clearLine`, `clearScreenDown`) instead of hand-written ANSI escapes. Only cursor hide/show requires raw ANSI                                                                                                                           |
 | Unicode                | Unicode symbols only (`✓`, `✗`, `⚠`, `⊘`, `│`), no ASCII fallback. Running tasks use a configurable spinner (default: dots from cli-spinners)                                                                                                                                                       |
@@ -136,7 +136,9 @@ Already partially written. Core types and operations:
   `1.23s`, `10–60s` → `12.3s`, `60–3600s` → `1m 23s`, `≥3600s` → `1h 2m`. Simple
   manual formatting (~10 lines), no Temporal API.
 - `walkTree(root)` — depth-first generator yielding `{ node, depth }`, starting
-  from the given root
+  from the given root. General-purpose utility — always yields raw tree depth
+  based on structure. Does NOT adjust depth for title-less tasks;
+  `computeFrame()` maintains its own display-depth tracking for that
 - `ancestorChain(node)` — path from root to given node
 
 Additional functions needed for concurrency:
@@ -147,7 +149,10 @@ function findRunningLeaves(root: TaskNode): TaskNode[];
 
 /** Count total tasks and completed tasks in the tree.
  *  Title-less (structural-only) tasks are excluded from counts —
- *  (C/N) reflects only visible titled tasks. */
+ *  (C/N) reflects only visible titled tasks.
+ *  "Completed" = any terminal status: success, warning, fail, or skipped.
+ *  All terminal statuses count — the counter shows how many tasks have
+ *  finished, regardless of outcome. */
 function countTasks(root: TaskNode): { total: number; completed: number };
 
 /** Total bytes of log output for a node (for activity ranking). */
@@ -234,7 +239,11 @@ export async function logTask<T>(
 
 /**
  * Append log output to the current task. Splits on newlines — multi-line
- * strings produce multiple log entries. For each resulting line, calls
+ * strings produce multiple log entries. Trailing empty strings from the
+ * split are kept (not dropped). `log("hello\n")` produces two entries:
+ * "hello" and "". `log("")` appends one empty string to logLines[],
+ * producing a blank line in the tail window — consistent with
+ * `console.log("")`. For each resulting line, calls
  * appendLog(node, line) and renderer.onLog(node, line). appendLog is a
  * trivial array push; log() owns the splitting and renderer notification.
  *
@@ -282,11 +291,11 @@ directly — not to a configurable output stream. This is by design: there is no
 session to read configuration from. The session's `output` option only applies
 to log lines rendered within a `logTask()` callback. Output is never lost.
 
-| Function                               | Outside context                                                                                |
-| :------------------------------------- | :--------------------------------------------------------------------------------------------- |
-| `logTask()` (context.ts)               | Auto-inits a session with defaults (or provided options). This becomes the root                |
-| `log()` (context.ts)                   | Splits on `\n`, writes each line to `process.stderr.write(line + "\n")` — output is never lost |
-| `logFromStream()` (log-from-stream.ts) | Falls back to piping lines to `process.stderr` via `log()` — output is never lost              |
+| Function                               | Outside context                                                                                                                                                                              |
+| :------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `logTask()` (context.ts)               | Auto-inits a session with defaults (or provided options). This becomes the root                                                                                                              |
+| `log()` (context.ts)                   | Splits on `\n`, writes each line to `process.stderr.write(line + "\n")` — output is never lost                                                                                               |
+| `logFromStream()` (log-from-stream.ts) | Falls back to piping lines to `process.stderr` via `log()` — output is never lost. Still collects and returns lines as a string (the return value is about stream content, not task context) |
 
 Sequential top-level `logTask()` calls (outside any context) each create their
 own independent render session. Each session starts and stops its own renderer
@@ -402,10 +411,13 @@ export async function logTask(titleOrFnOrOptions, fnOrOptions?, maybeFn?) {
     const hasSessionOptions = sessionKeys.some((k) => k in options);
     if (hasSessionOptions) {
       throw new Error(
-        "Session options (mode, tickInterval, output) are only " +
-          "allowed at the top level. Nested logTask() calls inherit the session " +
-          "from their parent. Per-task options (tailLines, spinner, map, filter) " +
-          "are allowed at any level.",
+        `Session options (mode, tickInterval, output) are only ` +
+          `allowed at the top level${
+            title ? ` (in logTask("${title}"))` : ""
+          }. ` +
+          `Nested logTask() calls inherit the session ` +
+          `from their parent. Per-task options (tailLines, spinner, map, filter) ` +
+          `are allowed at any level.`,
       );
     }
   }
@@ -743,14 +755,16 @@ Two implementations behind a common `Renderer` type, in separate files under
 
 ```typescript
 type Renderer = {
-  /** Called when a task starts. */
+  /** Called when a task starts. TtyRenderer ignores this (reads tree on tick).
+   *  PlainRenderer writes a start line immediately. */
   onTaskStart(node: TaskNode): void;
-  /** Called when a task completes (success or fail). */
+  /** Called when a task completes (success or fail). TtyRenderer ignores this
+   *  (reads tree on tick). PlainRenderer writes an end line immediately. */
   onTaskEnd(node: TaskNode): void;
   /** Called when a log line is appended to a task. TtyRenderer ignores this
-   *  (it polls on tick). PlainRenderer writes the line immediately. */
+   *  (reads tree on tick). PlainRenderer writes the line immediately. */
   onLog(node: TaskNode, line: string): void;
-  /** Start the render loop. */
+  /** Start the render loop (TtyRenderer starts tick interval). */
   start(root: TaskNode): void;
   /** Stop the render loop, render final state, dump error logs. */
   stop(): void;
@@ -766,10 +780,12 @@ does not modify task state. Handling orphaned running tasks (cancellation,
 aborting) is deferred to a future version (see "Cancellation" section).
 
 The renderer receives the `root: TaskNode` reference on `start()` and reads the
-tree directly on each render tick. The `onTaskStart`/`onTaskEnd` callbacks serve
-as dirty-flag triggers, not data carriers. The `onLog` callback is used by
-PlainRenderer to write log lines immediately as they arrive; TtyRenderer ignores
-it (new log output is picked up on the next tick-based render frame).
+tree directly on each render tick. The `onTaskStart`/`onTaskEnd` callbacks are
+informational hooks for the PlainRenderer (which writes immediately). The
+TtyRenderer ignores them — it reads the full tree state on each tick. The
+`onLog` callback is used by PlainRenderer to write log lines immediately as they
+arrive; TtyRenderer ignores it (new log output is picked up on the next
+tick-based render frame).
 
 **Wiring**: every code path that appends log output must call
 `renderer.onLog(node, line)` after `appendLog()`. This means:
@@ -783,10 +799,9 @@ it (new log output is picked up on the next tick-based render frame).
 ##### Render loop
 
 - **Tick interval**: 150ms (configurable)
-- **Rate limit**: 100ms minimum between renders
-- **Dirty flag**: set by `onTaskStart`/`onTaskEnd`; renders also happen on tick
-  (so duration timers update even without new events, and new log lines are
-  picked up)
+- **Render strategy**: render unconditionally on every tick. No dirty flag —
+  running tasks always need duration timer and spinner frame updates, so
+  "nothing changed" is rare. The tick is cheap if the frame is identical
 - On `stop()`: one final frame with no height limit, then dump full log for any
   failed tasks. The final frame shows failed tasks as collapsed single lines
   (`✗ Task Name  ERROR  1.2s`). The full error log dump (ancestor path header +
@@ -860,6 +875,12 @@ dim(`│ ${line}`);
 ```
 
 Indentation: each depth level adds 2 spaces of indent.
+
+All output lines (task lines and log tail lines) are truncated to `termWidth`
+with a trailing `…` if they exceed the terminal width. This prevents wrapping
+artifacts that would break cursor math. Applies to all lines regardless of
+source (auto-generated titles from `runCommand`, user-provided titles, log
+content).
 
 With concurrent tasks, multiple children of a running parent can be `running`
 simultaneously. Each running child is shown expanded (its own line + its
@@ -1066,11 +1087,16 @@ export type LogTaskOptions = SessionOptions & TaskOptions;
   propagates up through the callback chain. The top-level `logTask()` catches
   it, calls `renderer.stop()`, then rethrows.
 - **On `stop()`**: renderer renders one final frame, then dumps logs for every
-  failed task. Output goes to the same output stream configured for the session
-  (not hardcoded to stderr). This output is permanent (not cursor-overwritten).
-  Log lines are transformed through the task's `composedFlatMap` before output —
-  so secret redaction via `map`/`filter` applies to error dumps too, not just
-  the tail window. Error dump format:
+  failed task that is a **leaf failure** (no failed children). When a nested
+  task fails and the error propagates to the parent (making the parent also
+  `fail`), only the deepest failed task gets a log dump — the ancestor path
+  header already identifies the chain. Parents that failed solely due to error
+  propagation (not from their own throw) are not dumped separately. Output goes
+  to the same output stream configured for the session (not hardcoded to
+  stderr). This output is permanent (not cursor-overwritten). Log lines are
+  transformed through the task's `composedFlatMap` before output — so secret
+  redaction via `map`/`filter` applies to error dumps too, not just the tail
+  window. Error dump format:
   1. Ancestor chain path header: `--- Failed: Parent > Child > Grandchild ---`
   2. Log lines from the failed task (after `composedFlatMap`), indented with 4
      spaces
@@ -1161,7 +1187,9 @@ type LogFromStreamInput =
  *
  * For AsyncIterable<string>, each yielded string is passed to log(),
  * which splits on \n — so multi-line yielded strings produce multiple
- * log entries, consistent with all other input types.
+ * log entries, consistent with all other input types. Collection strategy
+ * (pre-split vs post-split) doesn't matter for the return value since
+ * both are `.join("\n").trim()`'d to the same result.
  */
 export async function logFromStream(input: LogFromStreamInput): Promise<string>;
 ```
@@ -1283,6 +1311,14 @@ Implementation:
    - `false`: returns the result without throwing or changing task status — task
      shows ✓
 
+**Note on `SpawnOptions.timeout`**: If the caller passes `timeout` in options,
+`node:child_process` sends `SIGTERM` when the timeout elapses. The process exits
+with `code: undefined` and `signal: 'SIGTERM'`. With `throwOnError: true`
+(default), this throws (non-zero exit). With `throwOnError: false`, the result
+is returned normally with `code: undefined, signal: 'SIGTERM'`. With
+`throwOnError: "warn"`, the subtask shows ⚠. Users manage process timeouts
+through this mechanism or externally via `AbortController`.
+
 ### Layer 8: `mod.ts` — public exports
 
 ```typescript
@@ -1303,12 +1339,7 @@ export type {
 } from "./src/log-from-stream.ts";
 
 // Types
-export type {
-  LogTaskOptions,
-  SessionOptions,
-  Spinner,
-  TaskOptions,
-} from "./src/session.ts";
+export type { SessionOptions, Spinner, TaskOptions } from "./src/session.ts";
 export type { TaskNode, TaskStatus } from "./src/task-node.ts";
 ```
 
@@ -1483,6 +1514,16 @@ examples, options reference. Include a visible callout in the `logFromStream`
 section explaining the StreamPair return semantics: passing a process object
 returns stdout only, while passing a single stream returns all its content.
 
+Include a "Gotchas" or "Tips" section covering:
+
+- `tailLines: 0` vs `filter: () => false` — the former hides the tail window
+  during execution but preserves full log output on error; the latter suppresses
+  output everywhere including error dumps (use for secret redaction)
+- `map`/`filter` apply to error dumps too — raw lines are always stored in
+  `logLines[]`, but error dump output goes through `composedFlatMap`
+- Sequential top-level `logTask()` calls create independent sessions — wrap in
+  an outer `logTask()` for shared progress tracking
+
 ## VT100 extension point
 
 The log buffer stores plain text lines (`string[]`). To add VT100 emulation:
@@ -1570,7 +1611,7 @@ real-time observation of span events during execution — the log tail window
 | Declarative open/close API                 | Not for v1. Callback-only ensures cleanup. Declarative handle API can be added later.                                                                                                                                                                              |
 | `getCurrentTask()` export                  | Not for v1. `setCurrentTask*()` functions cover common cases; direct node access encourages tight coupling.                                                                                                                                                        |
 | `getCurrentTaskLogs()` export              | Not for v1. Users track their own state. Keep the API surface minimal.                                                                                                                                                                                             |
-| `runCommand` default title                 | No truncation. `command.join(" ")` as-is; users pass an explicit title for complex commands.                                                                                                                                                                       |
+| `runCommand` default title                 | No truncation of the title string itself. `command.join(" ")` as-is; users pass an explicit title for complex commands. Long lines are truncated at terminal width by `computeFrame()` (see "Line truncation" decision).                                           |
 | `logFromStream` return semantics           | Implicit based on input shape (StreamPair → stdout only, single stream → all). Follows unix convention (stdout=data, stderr=diagnostics). Documented with rationale in JSDoc and README.                                                                           |
 | `map`/`filter` in error dumps              | Both apply (via `composedFlatMap`). Secrets redacted via `map`/`filter` are also redacted in error dumps. Raw `logLines[]` always preserved on the node. Use `tailLines: 0` (not `filter`) to hide output during execution while preserving error dumps.           |
 | Plain renderer prefix                      | Full ancestor path with progress counts: `[Root (C/N) > Child > Leaf]` for unambiguous interleaved output with progress tracking.                                                                                                                                  |
@@ -1602,6 +1643,21 @@ real-time observation of span events during execution — the log tail window
 | `logTask()` overload ordering              | `TaskOptions`-only overload listed before `SessionOptions & TaskOptions` to ensure correct TypeScript overload resolution (narrower type first). Title-less overloads listed before titled overloads.                                                              |
 | StreamPair detection wording               | Clarified: `.pipe()` / `.getReader()` checks are on the **input object itself**, not on its `.stdout`/`.stderr` properties.                                                                                                                                        |
 | Title-less tasks in progress count         | Excluded. `countTasks()` only counts titled tasks. `(C/N)` reflects visible tasks only.                                                                                                                                                                            |
+| `cli-spinners` usage                       | Runtime import. The default dots spinner is imported from `cli-spinners` at runtime, not hardcoded. `cli-spinners` is a runtime dependency in `deno.jsonc`.                                                                                                        |
+| `countTasks` completed definition          | All terminal statuses count: `success`, `warning`, `fail`, `skipped`. The counter shows how many tasks have finished, regardless of outcome.                                                                                                                       |
+| Error dump scope                           | Leaf failures only. When a nested task fails and the error propagates to the parent, only the deepest failed task (no failed children) gets a log dump. The ancestor path header identifies the chain.                                                             |
+| `log()` trailing newline                   | Keep all split results. `log("hello\n")` produces `["hello", ""]` — both are appended. `log("")` appends one empty line. Consistent with `console.log("")`.                                                                                                        |
+| TTY rate limit                             | Removed. Rely solely on the tick interval (150ms) for render throttling. Dirty-flag-triggered renders happen on the next tick, not immediately.                                                                                                                    |
+| `walkTree` depth semantics                 | General-purpose. Always yields raw tree depth. `computeFrame()` maintains its own display-depth tracking for title-less task adjustments.                                                                                                                          |
+| `logFromStream` outside-context return     | Still collects and returns lines as a string. The return value is about stream content, not task context.                                                                                                                                                          |
+| `log("")` behavior                         | Appends one empty string to `logLines[]`, producing a blank line in the tail window. Intentional blank lines are supported. Consistent with `console.log("")`.                                                                                                     |
+| Nested session options error message       | Includes the task title when available: `'Session options not allowed in nested logTask("My Task")'`. Helps identify the offending call.                                                                                                                           |
+| Line truncation                            | All output lines truncated to `termWidth` with trailing `…`. Prevents wrapping artifacts that break cursor math. Applies to task lines and log tail lines.                                                                                                         |
+| `runCommand` `timeout` interaction         | Documented. `SpawnOptions.timeout` sends SIGTERM; `throwOnError` controls whether this throws, warns, or returns silently.                                                                                                                                         |
+| `LogTaskOptions` export                    | Not exported from `mod.ts`. Users import `SessionOptions` and `TaskOptions` separately and compose with `&` if needed.                                                                                                                                             |
+| README gotchas section                     | Include a dedicated "Gotchas" section covering: `tailLines: 0` vs `filter`, `map`/`filter` in error dumps, sequential top-level sessions.                                                                                                                          |
+| `AsyncIterable` collection                 | Pre-split vs post-split doesn't matter — both `.join("\n").trim()` to the same result. Implementation can collect either way.                                                                                                                                      |
+| TTY render strategy                        | Render unconditionally on every tick (150ms). No dirty flag — running tasks always need duration/spinner updates, so idle ticks are rare. Simpler implementation.                                                                                                  |
 
 ## Implementation order
 
@@ -1630,9 +1686,9 @@ real-time observation of span events during execution — the log tail window
 7. `src/storage.ts` — `AsyncLocalStorage` instance + `ContextStore` type.
    Type-only imports from this package (must come before `session.ts` since
    `session.ts` imports from it)
-8. `src/session.ts` — internal `Session` class, `LogTaskOptions`,
-   `SessionOptions`, `TaskOptions`, `Spinner`. Renderer stored as a property.
-   Imports `storage` from `./storage.ts`. Not exported from the package
+8. `src/session.ts` — internal `Session` class, `SessionOptions`, `TaskOptions`,
+   `Spinner`. Renderer stored as a property. Imports `storage` from
+   `./storage.ts`. Not exported from the package
 9. `src/context.ts` — module-level `logTask()` (with options overload), `log()`,
    `setCurrentTaskWarning()`, `setCurrentTaskSkipped()`,
    `setCurrentTaskTitle()`. Imports `Session` from `./session.ts` and `storage`
