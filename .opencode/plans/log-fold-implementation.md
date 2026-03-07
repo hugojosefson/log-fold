@@ -15,20 +15,20 @@ nested units of work benefits.
 
 ## Design decisions (confirmed)
 
-| Decision               | Choice                                                                                                                                                                                                                                                                     |
-| :--------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| API style              | Single `logTask()` function with AsyncLocalStorage-based implicit context. Auto-inits on first call; accepts optional config via options argument (top-level only — throws if passed to nested calls). Callbacks can be sync or async (`() => T                            |
-| Log tail               | Keep full log buffer, display last N lines in tail window. Print full log on error                                                                                                                                                                                         |
-| VT100 emulation        | Skip for now; design the log buffer so a VT100 parser can plug in later                                                                                                                                                                                                    |
-| Subprocess integration | `logFromStream()` accepts Node.js `Readable`, web `ReadableStream`, arrays, or `{ stdout, stderr }` objects (covers `node:child_process`, `Deno.Command`, `Bun.spawn`). `runCommand()` wraps `node:child_process` as convenience                                           |
-| Runtime                | Runtime-agnostic via `node:` built-in modules (`node:tty`, `node:process`, `node:async_hooks`, `node:child_process`). No Deno-specific APIs                                                                                                                                |
-| Dependencies           | `jsr:@std/fmt` (includes colors) + `npm:cli-spinners` + `node:` built-ins                                                                                                                                                                                                  |
-| Colors support         | Delegates to `jsr:@std/fmt/colors` which auto-checks `NO_COLOR` env var on module load. The `colors` option overrides: `"auto"` (default, let @std/fmt decide), `true` (force on via `setColorEnabled(true)` after load), `false` (force off via `setColorEnabled(false)`) |
-| Terminal control       | `node:tty` `WriteStream` methods (`cursorTo`, `moveCursor`, `clearLine`, `clearScreenDown`) instead of hand-written ANSI escapes. Only cursor hide/show requires raw ANSI                                                                                                  |
-| Unicode                | Unicode symbols only (`✓`, `✗`, `⚠`, `⊘`, `│`), no ASCII fallback. Running tasks use a configurable spinner (default: dots from cli-spinners)                                                                                                                              |
-| Colors                 | Buildkit-style: cyan for completed, red for errors, yellow for warnings, dim for skipped                                                                                                                                                                                   |
-| Exports                | Submodule exports in `deno.jsonc`                                                                                                                                                                                                                                          |
-| Concurrency            | Support multiple children running simultaneously under one parent                                                                                                                                                                                                          |
+| Decision               | Choice                                                                                                                                                                                                                                          |
+| :--------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| API style              | Single `logTask()` function with AsyncLocalStorage-based implicit context. Auto-inits on first call; accepts optional config via options argument (top-level only — throws if passed to nested calls). Callbacks can be sync or async (`() => T |
+| Log tail               | Keep full log buffer, display last N lines in tail window. Print full log on error                                                                                                                                                              |
+| VT100 emulation        | Skip for now; design the log buffer so a VT100 parser can plug in later                                                                                                                                                                         |
+| Subprocess integration | `logFromStream()` accepts Node.js `Readable`, web `ReadableStream`, arrays, or `{ stdout, stderr }` objects (covers `node:child_process`, `Deno.Command`, `Bun.spawn`). `runCommand()` wraps `node:child_process` as convenience                |
+| Runtime                | Runtime-agnostic via `node:` built-in modules (`node:tty`, `node:process`, `node:async_hooks`, `node:child_process`). No Deno-specific APIs                                                                                                     |
+| Dependencies           | `jsr:@std/fmt` (includes colors) + `npm:cli-spinners` + `node:` built-ins                                                                                                                                                                       |
+| Colors support         | Delegates to `jsr:@std/fmt/colors` which auto-checks `NO_COLOR` env var. No override option — users control colors via `NO_COLOR` environment variable                                                                                          |
+| Terminal control       | `node:tty` `WriteStream` methods (`cursorTo`, `moveCursor`, `clearLine`, `clearScreenDown`) instead of hand-written ANSI escapes. Only cursor hide/show requires raw ANSI                                                                       |
+| Unicode                | Unicode symbols only (`✓`, `✗`, `⚠`, `⊘`, `│`), no ASCII fallback. Running tasks use a configurable spinner (default: dots from cli-spinners)                                                                                                   |
+| Colors                 | Buildkit-style: cyan for completed, red for errors, yellow for warnings, dim for skipped                                                                                                                                                        |
+| Exports                | Submodule exports in `deno.jsonc`                                                                                                                                                                                                               |
+| Concurrency            | Support multiple children running simultaneously under one parent                                                                                                                                                                               |
 
 ## Architecture
 
@@ -98,7 +98,9 @@ Already partially written. Core types and operations:
 - `appendLog(node, text)` — log accumulation (splits on `\n`, handles trailing
   newline)
 - `tailLogLines(node, n)` — last N lines for the tail window
-- `durationSec(node)` — elapsed seconds (uses `Date.now()` for running tasks)
+- `durationSec(node)` — returns `finishedAt - startedAt` for
+  completed/failed/warned/skipped tasks, `Date.now() - startedAt` for running
+  tasks, `undefined` for pending tasks
 - `walkTree(roots)` — depth-first generator yielding `{ node, depth }`
 - `ancestorChain(node)` — path from root to given node
 
@@ -150,9 +152,12 @@ Module-level functions:
  * with default options — the renderer starts when this task starts
  * and stops when this task completes.
  *
- * Options (tailLines, mode, output, etc.) are accepted but only apply at the
- * top level. If options are passed to a nested logTask(), a warning is logged
- * and the options are ignored.
+ * Options are split into two categories:
+ * - Session options (tailLines, mode, output, tickInterval, spinner) only
+ *   apply at the top level. Passing session options to a nested logTask()
+ *   throws an error — this is a programming error.
+ * - Per-task options (map, filter) are allowed at any nesting level and
+ *   compose with ancestor tasks' map/filter (child first, then parent).
  */
 export async function logTask<T>(
   title: string,
@@ -206,9 +211,11 @@ own independent render session. Each session starts and stops its own renderer.
 To unify multiple top-level tasks under one session, wrap them in an outer
 `logTask()`.
 
-Passing options to a nested `logTask()` (inside an existing context) throws an
-error — options only apply at the top level. This is a programming error and
-should be caught during development.
+Passing session options (mode, tailLines, tickInterval, output, spinner) to a
+nested `logTask()` (inside an existing context) throws an error — these options
+only apply at the top level. This is a programming error and should be caught
+during development. Per-task options (map, filter) are allowed at any nesting
+level.
 
 `logTask()` pushes a new `ContextStore` into AsyncLocalStorage before calling
 `fn()`, so any nested `logTask()`/`log()` calls inside `fn()` auto-nest
@@ -258,11 +265,21 @@ export async function logTask(title, fnOrOptions, maybeFn?) {
   }
 
   if (options) {
-    // Nested call with options — programming error, fail fast
-    throw new Error(
-      "logTask() options are only allowed at the top level. " +
-        "Nested logTask() calls inherit the session from their parent.",
-    );
+    const sessionKeys = [
+      "mode",
+      "tailLines",
+      "tickInterval",
+      "output",
+      "spinner",
+    ];
+    const hasSessionOptions = sessionKeys.some((k) => k in options);
+    if (hasSessionOptions) {
+      throw new Error(
+        "Session options (mode, tailLines, tickInterval, output, spinner) are only " +
+          "allowed at the top level. Nested logTask() calls inherit the session " +
+          "from their parent. Per-task options (map, filter) are allowed at any level.",
+      );
+    }
   }
 
   // Nested call — create child under current context
@@ -427,7 +444,7 @@ import { log, logTask } from "@hugojosefson/log-fold";
 
 await logTask(
   "Deploying",
-  { tailLines: 10, headerText: "Deploying" },
+  { tailLines: 10 },
   async () => {
     await logTask("Upload assets", async () => {
       log("uploading...");
@@ -440,7 +457,7 @@ await logTask(
 ```
 
 Without options, the first `logTask()` auto-initializes with defaults. Options
-are only needed for custom `tailLines`, `mode`, `output`, `headerText`, etc.
+are only needed for custom `tailLines`, `mode`, `output`, etc.
 
 ##### Use case 9 — BYO subprocess with `logFromStream` (Node.js `child_process`)
 
@@ -558,6 +575,36 @@ await logTask("Download", async () => {
 });
 ```
 
+##### Use case 17 — filtering sensitive output
+
+```typescript
+import { log, logTask } from "@hugojosefson/log-fold";
+
+await logTask(
+  "Deploy",
+  { filter: (line) => !line.includes("SECRET") },
+  async () => {
+    log("connecting to server...");
+    log("using token: SECRET_abc123"); // stored in logLines but hidden from tail window
+    log("deploy complete");
+  },
+);
+```
+
+##### Use case 18 — mapping log lines
+
+```typescript
+import { log, logTask } from "@hugojosefson/log-fold";
+
+await logTask(
+  "Build",
+  { map: (line) => line.replace(/\/home\/user/g, "~") },
+  async () => {
+    log("compiling /home/user/src/main.ts"); // displayed as "compiling ~/src/main.ts"
+  },
+);
+```
+
 ### Layer 4: `src/renderer/` — rendering
 
 Two implementations behind a common interface, in separate files under
@@ -580,6 +627,11 @@ type Renderer = {
   stop(): void;
 };
 ```
+
+All Renderer methods become no-ops after `stop()` is called. This handles the
+edge case where concurrent tasks continue writing after one branch throws and
+the parent's `logTask` calls `stop()`. Users should use `Promise.allSettled` if
+they need all branches to complete before the parent fails.
 
 The renderer receives the `roots: TaskNode[]` reference on `start()` and reads
 the tree directly on each render tick. The `onTaskStart`/`onTaskEnd` callbacks
@@ -609,38 +661,32 @@ it (new log output is picked up on the next tick-based render frame).
 ##### Frame computation
 
 Extracted into a pure function `computeFrame(roots, options)` returning
-`string[]` so it's testable without a terminal. `options` includes `tailLines`,
-`termWidth`, `termHeight`, `headerText`, `spinner`, and `now` (current
-timestamp, so tests can pass a fixed value and get deterministic spinner
-frames).
+`{ lines: string[], displayCounts: Map<string, number> }` so it's testable
+without a terminal. `options` includes `tailLines`, `termWidth`, `termHeight`,
+`displayCounts: Map<string, number>`, `spinner`, and `now` (current timestamp,
+so tests can pass a fixed value and get deterministic spinner frames). The
+`displayCounts` map is passed into `computeFrame` and a new copy is returned
+(tracks how many frames each node's tail has been shown, providing "stickiness"
+so the display doesn't thrash between tasks' log windows).
 
 Each render cycle produces a list of output lines:
 
-###### Step 1 — header line (optional)
-
-Only rendered when `headerText` is set. If `headerText` is not set, the header
-line is omitted entirely — the frame starts directly with task lines.
-
-```
-[+] Building 12.3s (3/8)
-[+] Building 12.3s (8/8) FINISHED
-```
-
-Shows elapsed wall time since `start()` was called, completed/total task count
-(all nodes in tree, not just roots), and "FINISHED" when everything is done.
+There is no separate header line. The aggregate progress count (completed/total)
+is shown on the root task's running line (see Step 2).
 
 ###### Step 2 — task lines (recursive)
 
 Walk the task tree depth-first. For each node at a given `depth`:
 
-| Status    | Rendering                                            | Color              |
-| :-------- | :--------------------------------------------------- | :----------------- |
-| `success` | `✓ Task Name  1.2s` (single line, children hidden)   | dim cyan           |
-| `warning` | `⚠ Task Name  1.2s` (single line, children hidden)   | yellow             |
-| `fail`    | `✗ Task Name  ERROR  1.2s` (single line)             | red                |
-| `running` | `<frame> Task Name  1.2s` then recurse into children | default foreground |
-| `skipped` | `⊘ Task Name` (single line, no duration)             | dim                |
-| `pending` | not shown                                            | —                  |
+| Status            | Rendering                                                  | Color              |
+| :---------------- | :--------------------------------------------------------- | :----------------- |
+| `success`         | `✓ Task Name  1.2s` (single line, children hidden)         | dim cyan           |
+| `warning`         | `⚠ Task Name  1.2s` (single line, children hidden)         | yellow             |
+| `fail`            | `✗ Task Name  ERROR  1.2s` (single line)                   | red                |
+| `running` (root)  | `<frame> Task Name  1.2s (3/8)` then recurse into children | default foreground |
+| `running` (child) | `<frame> Task Name  1.2s` then recurse into children       | default foreground |
+| `skipped`         | `⊘ Task Name` (single line, no duration)                   | dim                |
+| `pending`         | not shown                                                  | —                  |
 
 `<frame>` is the current spinner frame (cycled using
 `frames[Math.floor(now / interval) % frames.length]`). The default spinner is
@@ -676,13 +722,11 @@ Following buildkit's `setupTerminals()` approach:
 
 1. Collect all running leaves (nodes with `status === "running"`, no running
    children, and `logLines.length > 0`)
-2. Rank by activity: `logBytes + displayCount * 50` (where `displayCount` is
-   renderer-internal state stored in a `Map<string, number>` keyed by task ID —
+2. Rank by activity: `logBytes + displayCount * 50` (where `displayCount` comes
+   from the `displayCounts` map passed into `computeFrame`, keyed by task ID —
    tracks how many frames this node's tail has been shown, provides "stickiness"
    so the display doesn't thrash between different tasks' log windows)
-3. Calculate available viewport lines:
-   `free = termHeight - headerLines -
-   taskLines - 2`
+3. Calculate available viewport lines: `free = termHeight - taskLines - 2`
 4. Each tail window costs `tailLines + 1` lines (the log lines plus visual
    padding)
 5. Greedily assign tail windows to ranked candidates while `free > 0`, reducing
@@ -779,7 +823,7 @@ export type Spinner = {
   frames: string[];
 };
 
-export type LogTaskOptions = {
+export type SessionOptions = {
   /** Force TTY or plain mode. Default: "auto" (detect via isTTY). */
   mode?: "tty" | "plain" | "auto";
   /** Number of log tail lines to show per task. Default: 6. */
@@ -792,8 +836,6 @@ export type LogTaskOptions = {
    * When mode is "plain", any Writable with write() works.
    */
   output?: WriteStream | { write(s: string): boolean };
-  /** Header text (e.g. "Building", "Deploying"). Default: none (no header line). */
-  headerText?: string;
   /**
    * Spinner for running tasks. Default: dots spinner
    * (`{ interval: 80, frames: ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"] }`)
@@ -801,16 +843,25 @@ export type LogTaskOptions = {
    * Pass any object matching `Spinner`, e.g. from the `cli-spinners` package.
    */
   spinner?: Spinner;
-  /**
-   * Color output. Default: "auto" (delegates to @std/fmt/colors which checks
-   * NO_COLOR env var and TTY automatically).
-   * - "auto": let @std/fmt/colors decide (default)
-   * - true: force colors on (calls setColorEnabled(true) after module load,
-   *   overrides NO_COLOR)
-   * - false: force colors off (calls setColorEnabled(false))
-   */
-  colors?: boolean | "auto";
 };
+
+export type TaskOptions = {
+  /**
+   * Transform each log line before display. Applied at display time only —
+   * original lines are preserved in logLines[] for error dumps.
+   * When composed with ancestor tasks: child's map runs first, then parent's.
+   */
+  map?: (line: string) => string;
+  /**
+   * Filter log lines at display time. Return true to show, false to hide.
+   * Applied after map. Original lines are preserved in logLines[] for error dumps.
+   * When composed with ancestor tasks: child's filter runs first, then parent's.
+   */
+  filter?: (line: string) => boolean;
+};
+
+/** Options for the top-level logTask() call. Combines session + per-task options. */
+export type LogTaskOptions = SessionOptions & TaskOptions;
 ```
 
 #### Error handling
@@ -1021,7 +1072,12 @@ export type {
 } from "./src/log-from-stream.ts";
 
 // Types
-export type { LogTaskOptions, Spinner } from "./src/session.ts";
+export type {
+  LogTaskOptions,
+  SessionOptions,
+  Spinner,
+  TaskOptions,
+} from "./src/session.ts";
 export type { TaskNode, TaskStatus } from "./src/task-node.ts";
 ```
 
@@ -1079,7 +1135,7 @@ Test the pure `computeFrame()` function directly.
 - Log tail window → last N lines shown for running leaf
 - Multiple concurrent leaves → competitive tail allocation by activity
 - Viewport overflow → completed tasks dropped, running tasks preserved
-- No tasks → only header line
+- No tasks → empty frame
 - Deeply nested → correct indentation at each level
 
 #### `test/context.test.ts` — AsyncLocalStorage context tests
@@ -1091,7 +1147,11 @@ Test the pure `computeFrame()` function directly.
 - `Promise.all` with multiple `logTask()` calls → separate branches
 - `log()` goes to the correct task in concurrent context
 - `logTask()` with options at top level configures the session
-- `logTask()` with options at nested level throws an error
+- `logTask()` with session options at nested level throws an error
+- `logTask()` with per-task options (map/filter) at nested level works
+- map/filter compose: child's map runs first, then parent's map
+- map/filter are display-only — original lines preserved in logLines[]
+- filter: filtered lines not shown in tail window but preserved in logLines[]
 - `setCurrentTaskWarning()` sets task status to warning
 - `setCurrentTaskSkipped()` sets task status to skipped
 - `setCurrentTaskTitle()` updates task title
@@ -1236,17 +1296,17 @@ real-time observation of span events during execution — the log tail window
    (`computeFrame()` pure function), `tty-renderer.ts` (TTY renderer using
    `node:tty` `WriteStream` methods, render loop, cursor strategy),
    `plain-renderer.ts` (plain renderer with immediate `onLog` output)
-6. `src/log-from-stream.ts` — stream piping with `AsyncIterable<string>` support
-7. `src/storage.ts` — `AsyncLocalStorage` instance + `ContextStore` type.
+6. `src/storage.ts` — `AsyncLocalStorage` instance + `ContextStore` type.
    Type-only imports from this package (must come before `session.ts` since
    `session.ts` imports from it)
-8. `src/session.ts` — internal `Session` class, `LogTaskOptions`, `Spinner`.
-   Renderer stored as a property. Imports `storage` from `./storage.ts`. Not
-   exported from the package
-9. `src/context.ts` — module-level `logTask()` (with options overload), `log()`,
+7. `src/session.ts` — internal `Session` class, `LogTaskOptions`,
+   `SessionOptions`, `TaskOptions`, `Spinner`. Renderer stored as a property.
+   Imports `storage` from `./storage.ts`. Not exported from the package
+8. `src/context.ts` — module-level `logTask()` (with options overload), `log()`,
    `setCurrentTaskWarning()`, `setCurrentTaskSkipped()`,
    `setCurrentTaskTitle()`. Imports `Session` from `./session.ts` and `storage`
    from `./storage.ts`
+9. `src/log-from-stream.ts` — stream piping with `AsyncIterable<string>` support
 10. `src/run-command.ts` — `runCommand(command)` or
     `runCommand(title, command, options?)`, uses `logTask()` internally
 11. `mod.ts` — public exports
