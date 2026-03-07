@@ -1,9 +1,10 @@
 import { assertEquals } from "@std/assert";
 import { Readable } from "node:stream";
 import { logFromStream, logTask } from "../mod.ts";
+import type { WriteStreamLike } from "../src/renderer/write-stream-like.ts";
 
 /** Create a mock writable stream that collects output. */
-function mockStream(): { write(s: string): boolean; lines: string[] } {
+function mockStream(): WriteStreamLike & { lines: string[] } {
   const lines: string[] = [];
   return {
     write(s: string): boolean {

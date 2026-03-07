@@ -3,6 +3,7 @@ import type { WriteStream } from "node:tty";
 import { createPlainRenderer } from "./renderer/plain-renderer.ts";
 import type { Renderer } from "./renderer/renderer.ts";
 import { createTtyRenderer } from "./renderer/tty-renderer.ts";
+import type { WriteStreamLike } from "./renderer/write-stream-like.ts";
 import type { TaskNode } from "./task-node.ts";
 
 // Re-export types from task-node.ts for convenience
@@ -19,7 +20,7 @@ export type SessionOptions = {
    * When mode is "tty", must be a tty.WriteStream (for cursor methods).
    * When mode is "plain", any Writable with write() works.
    */
-  output?: WriteStream | { write(s: string): boolean };
+  output?: WriteStream | WriteStreamLike;
 };
 
 export const SESSION_OPTIONS_KEYS: (keyof SessionOptions)[] = [
@@ -47,7 +48,7 @@ function isTtyWriteStream(
 export class Session {
   root!: TaskNode;
   readonly renderer: Renderer;
-  readonly output: WriteStream | { write(s: string): boolean };
+  readonly output: WriteStream | WriteStreamLike;
 
   constructor(options?: SessionOptions) {
     const output = options?.output ?? process.stderr;

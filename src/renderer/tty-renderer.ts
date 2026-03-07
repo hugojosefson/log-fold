@@ -8,6 +8,7 @@ import {
   walkTree,
 } from "../task-node.ts";
 import { computeFrame } from "./compute-frame.ts";
+import { dumpNodeLogs } from "./dump-node-logs.ts";
 import type { Renderer } from "./renderer.ts";
 
 /** TTY renderer — frame-based re-render using node:tty WriteStream methods. */
@@ -153,25 +154,7 @@ function dumpFailedLeafLogs(
     const pathParts = chain.map((n) => n.title ?? "<unnamed task>");
     const header = `--- Failed: ${pathParts.join(" > ")} ---`;
     output.write("\n" + header + "\n");
-
-    // Log lines through composedFlatMap, indented with 4 spaces
-    for (const rawLine of node.logLines) {
-      const mapped = node.composedFlatMap(rawLine);
-      for (const line of mapped) {
-        output.write(`    ${line}\n`);
-      }
-    }
-
-    // Error + stack trace, indented with 4 spaces
-    if (node.error) {
-      if (node.error.stack) {
-        for (const line of node.error.stack.split("\n")) {
-          output.write(`    ${line}\n`);
-        }
-      } else {
-        output.write(`    ${node.error.message}\n`);
-      }
-    }
+    dumpNodeLogs(node, output);
 
     // Duration if available
     const ms = durationMillis(node);

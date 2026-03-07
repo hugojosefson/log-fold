@@ -5,11 +5,13 @@ import {
   durationMillis,
   type TaskNode,
 } from "../task-node.ts";
+import { dumpNodeLogs } from "./dump-node-logs.ts";
 import type { Renderer } from "./renderer.ts";
+import type { WriteStreamLike } from "./write-stream-like.ts";
 
 /** Plain renderer — sequential text output for non-TTY environments. */
 export function createPlainRenderer(
-  output: { write(s: string): boolean },
+  output: WriteStreamLike,
 ): Renderer {
   let stopped = false;
   let root: TaskNode | undefined;
@@ -60,25 +62,27 @@ export function createPlainRenderer(
       }
 
       const ms = durationMillis(node);
-      const duration = ms !== undefined ? formatDuration(ms) : "";
+      const duration = ms ? formatDuration(ms) : "";
 
-      switch (node.status) {
-        case "success":
-          output.write(`${prefix(node)} ✓ ${duration}\n`);
-          break;
-        case "warning":
-          output.write(`${prefix(node)} ⚠ ${duration}\n`);
-          break;
-        case "fail":
-          output.write(`${prefix(node)} ✗ ERROR  ${duration}\n`);
-          // Dump full log on fail
-          dumpFailLog(node, output);
-          break;
-        case "skipped":
-          output.write(`${prefix(node)} ⊘ skipped\n`);
-          break;
-        default:
-          break;
+      if (node.status === "success") {
+        output.write(`${prefix(node)} ✓ ${duration}\n`);
+        return;
+      }
+      if (node.status === "warning") {
+        output.write(`${prefix(node)} ⚠ ${duration}\n`);
+        return;
+      }
+
+      if (node.status === "fail") {
+        output.write(`${prefix(node)} ✗ ERROR  ${duration}\n`);
+        // Dump full log on fail
+        dumpFailLog(node, output);
+        return;
+      }
+
+      if (node.status === "skipped") {
+        output.write(`${prefix(node)} ⊘ skipped\n`);
+        return;
       }
     },
 
@@ -87,9 +91,7 @@ export function createPlainRenderer(
         return;
       }
       // Find the nearest titled ancestor for the prefix
-      const prefixNode = node.title !== undefined ? node : findTitledAncestor(
-        node,
-      );
+      const prefixNode = node.title ? node : findTitledAncestor(node);
       if (prefixNode) {
         // Apply composedFlatMap to the line
         const mapped = node.composedFlatMap(line);
@@ -130,7 +132,7 @@ function findTitledAncestor(node: TaskNode): TaskNode | undefined {
 /** Dump full log for a failed task. */
 function dumpFailLog(
   node: TaskNode,
-  output: { write(s: string): boolean },
+  output: WriteStreamLike,
 ): void {
   // Only dump for leaf failures (no failed children)
   const hasFailedChild = node.children.some((c) => c.status === "fail");
@@ -139,21 +141,5 @@ function dumpFailLog(
   }
 
   // Log lines through composedFlatMap
-  for (const rawLine of node.logLines) {
-    const mapped = node.composedFlatMap(rawLine);
-    for (const line of mapped) {
-      output.write(`    ${line}\n`);
-    }
-  }
-
-  // Error + stack trace
-  if (node.error) {
-    if (node.error.stack) {
-      for (const line of node.error.stack.split("\n")) {
-        output.write(`    ${line}\n`);
-      }
-    } else {
-      output.write(`    ${node.error.message}\n`);
-    }
-  }
+  dumpNodeLogs(node, output);
 }

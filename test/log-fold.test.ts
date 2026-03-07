@@ -1,8 +1,9 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { log, logTask } from "../mod.ts";
+import type { WriteStreamLike } from "../src/renderer/write-stream-like.ts";
 
 /** Create a mock writable stream that collects output. */
-function mockStream(): { write(s: string): boolean; lines: string[] } {
+function createMockOutput(): WriteStreamLike & { lines: string[] } {
   const lines: string[] = [];
   return {
     write(s: string): boolean {
@@ -18,7 +19,7 @@ Deno.test({
   sanitizeOps: false,
   fn: async (t) => {
     await t.step("sequential tasks run and complete", async () => {
-      const output = mockStream();
+      const output = createMockOutput();
       await logTask("Root", { mode: "plain" as const, output }, async () => {
         await logTask("Step 1", () => {
           log("doing step 1");
@@ -40,7 +41,7 @@ Deno.test({
     });
 
     await t.step("concurrent tasks via Promise.all", async () => {
-      const output = mockStream();
+      const output = createMockOutput();
       await logTask("Root", { mode: "plain" as const, output }, async () => {
         await Promise.all([
           logTask("Task A", () => {
@@ -62,7 +63,7 @@ Deno.test({
     await t.step(
       "error: task fails, error captured, full log available",
       async () => {
-        const output = mockStream();
+        const output = createMockOutput();
         await assertRejects(
           async () => {
             await logTask(
@@ -91,7 +92,7 @@ Deno.test({
     );
 
     await t.step("nested error propagates to parent", async () => {
-      const output = mockStream();
+      const output = createMockOutput();
       await assertRejects(
         async () => {
           await logTask(
@@ -118,7 +119,7 @@ Deno.test({
     await t.step(
       "error dump applies composedFlatMap (secrets redacted)",
       async () => {
-        const output = mockStream();
+        const output = createMockOutput();
         await assertRejects(
           async () => {
             await logTask(
@@ -152,7 +153,7 @@ Deno.test({
     await t.step(
       "error dump preserves all lines that pass composedFlatMap",
       async () => {
-        const output = mockStream();
+        const output = createMockOutput();
         await assertRejects(
           async () => {
             await logTask(
@@ -186,7 +187,7 @@ Deno.test({
     await t.step(
       "concurrent error via Promise.all: orphaned sibling remains running",
       async () => {
-        const output = mockStream();
+        const output = createMockOutput();
         // Track timer for cleanup when Promise.all rejects
         let timerId: ReturnType<typeof setTimeout> | undefined;
         await assertRejects(
@@ -229,7 +230,7 @@ Deno.test({
     await t.step(
       "Promise.allSettled: all branches complete before parent handles errors",
       async () => {
-        const output = mockStream();
+        const output = createMockOutput();
         const results = await logTask(
           "Root",
           { mode: "plain" as const, output },

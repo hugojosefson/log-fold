@@ -7,44 +7,28 @@ import {
   setCurrentTaskWarning,
 } from "../src/context.ts";
 import { storage } from "../src/storage.ts";
-
-/** Create a mock writable stream that captures output. */
-function createMockOutput(): {
-  stream: { write(s: string): boolean };
-  lines: string[];
-} {
-  const lines: string[] = [];
-  return {
-    stream: {
-      write(s: string): boolean {
-        lines.push(s);
-        return true;
-      },
-    },
-    lines,
-  };
-}
+import { createMockOutput } from "./create-mock-output.ts";
 
 Deno.test("context", async (t) => {
   await t.step(
     "logTask() outside any context auto-inits a session",
     async () => {
-      const mock = createMockOutput();
+      const output = createMockOutput();
       const result = await logTask("Auto-init", {
         mode: "plain",
-        output: mock.stream,
+        output,
       }, () => {
         return 42;
       });
       assertEquals(result, 42);
       // The plain renderer should have written something
-      assertEquals(mock.lines.length > 0, true);
+      assertEquals(output.lines.length > 0, true);
     },
   );
 
   await t.step("nested logTask() calls create correct hierarchy", async () => {
-    const mock = createMockOutput();
-    await logTask("Root", { mode: "plain", output: mock.stream }, async () => {
+    const output = createMockOutput();
+    await logTask("Root", { mode: "plain", output }, async () => {
       await logTask("Child", async () => {
         await logTask("Grandchild", () => {
           // Verify we're inside nested context
@@ -61,10 +45,10 @@ Deno.test("context", async (t) => {
   await t.step(
     "Promise.all with multiple logTask() → separate branches",
     async () => {
-      const mock = createMockOutput();
+      const output = createMockOutput();
       await logTask(
         "Root",
-        { mode: "plain", output: mock.stream },
+        { mode: "plain", output },
         async () => {
           const parentStore = storage.getStore()!;
           const root = parentStore.node!;
@@ -93,10 +77,10 @@ Deno.test("context", async (t) => {
   await t.step(
     "log() goes to the correct task in concurrent context",
     async () => {
-      const mock = createMockOutput();
+      const output = createMockOutput();
       await logTask(
         "Root",
-        { mode: "plain", output: mock.stream },
+        { mode: "plain", output },
         async () => {
           await Promise.all([
             logTask("Task A", () => {
@@ -124,10 +108,10 @@ Deno.test("context", async (t) => {
   await t.step(
     "logTask() with options at top level configures the session",
     async () => {
-      const mock = createMockOutput();
+      const output = createMockOutput();
       await logTask(
         "Configured",
-        { mode: "plain", output: mock.stream, tailLines: 3 },
+        { mode: "plain", output, tailLines: 3 },
         () => {
           const store = storage.getStore()!;
           assertEquals(store.node!.tailLines, 3);
@@ -139,12 +123,12 @@ Deno.test("context", async (t) => {
   await t.step(
     "logTask() with session options at nested level throws",
     async () => {
-      const mock = createMockOutput();
+      const output = createMockOutput();
       await assertRejects(
         async () => {
           await logTask(
             "Root",
-            { mode: "plain", output: mock.stream },
+            { mode: "plain", output },
             async () => {
               await logTask(
                 "Nested",
@@ -163,10 +147,10 @@ Deno.test("context", async (t) => {
   await t.step(
     "logTask() with per-task options (map/filter) at nested level works",
     async () => {
-      const mock = createMockOutput();
+      const output = createMockOutput();
       await logTask(
         "Root",
-        { mode: "plain", output: mock.stream },
+        { mode: "plain", output },
         async () => {
           await logTask(
             "Child",
@@ -185,12 +169,12 @@ Deno.test("context", async (t) => {
   await t.step(
     "map/filter compose: local map → local filter → parent composedFlatMap",
     async () => {
-      const mock = createMockOutput();
+      const output = createMockOutput();
       await logTask(
         "Root",
         {
           mode: "plain",
-          output: mock.stream,
+          output,
           filter: (line: string) => !line.includes("SECRET"),
         },
         async () => {
@@ -223,13 +207,13 @@ Deno.test("context", async (t) => {
   await t.step(
     "map/filter apply to both tail window display and error dumps",
     async () => {
-      const mock = createMockOutput();
+      const output = createMockOutput();
       try {
         await logTask(
           "Root",
           {
             mode: "plain",
-            output: mock.stream,
+            output,
             filter: (line: string) => !line.includes("SECRET"),
           },
           async () => {
@@ -245,7 +229,7 @@ Deno.test("context", async (t) => {
       }
 
       // Check that SECRET was NOT in the plain renderer output
-      const outputText = mock.lines.join("");
+      const outputText = output.lines.join("");
       assertEquals(outputText.includes("SECRET"), false);
       assertEquals(outputText.includes("normal line"), true);
     },
@@ -254,12 +238,12 @@ Deno.test("context", async (t) => {
   await t.step(
     "original lines always preserved in logLines[] regardless of map/filter",
     async () => {
-      const mock = createMockOutput();
+      const output = createMockOutput();
       await logTask(
         "Root",
         {
           mode: "plain",
-          output: mock.stream,
+          output,
           map: (line: string) => line.toUpperCase(),
           filter: (line: string) => line !== "HIDDEN",
         },
@@ -280,8 +264,8 @@ Deno.test("context", async (t) => {
   await t.step(
     "setCurrentTaskWarning() sets task status to warning",
     async () => {
-      const mock = createMockOutput();
-      await logTask("Warned", { mode: "plain", output: mock.stream }, () => {
+      const output = createMockOutput();
+      await logTask("Warned", { mode: "plain", output }, () => {
         setCurrentTaskWarning();
 
         const store = storage.getStore()!;
@@ -289,30 +273,29 @@ Deno.test("context", async (t) => {
       });
 
       // After completion, status should still be warning (not overridden to success)
-      const output = mock.lines.join("");
-      assertEquals(output.includes("⚠"), true);
+      assertEquals(output.lines.some((line) => line.includes("⚠")), true);
     },
   );
 
   await t.step(
     "setCurrentTaskSkipped() sets task status to skipped",
     async () => {
-      const mock = createMockOutput();
-      await logTask("Skipped", { mode: "plain", output: mock.stream }, () => {
+      const output = createMockOutput();
+      await logTask("Skipped", { mode: "plain", output }, () => {
         setCurrentTaskSkipped();
 
         const store = storage.getStore()!;
         assertEquals(store.node!.status, "skipped");
       });
 
-      const output = mock.lines.join("");
-      assertEquals(output.includes("⊘"), true);
+      // After completion, status should still be skipped (not overridden to success)
+      assertEquals(output.lines.some((line) => line.includes("⊘")), true);
     },
   );
 
   await t.step("setCurrentTaskTitle() updates task title", async () => {
-    const mock = createMockOutput();
-    await logTask("Original", { mode: "plain", output: mock.stream }, () => {
+    const output = createMockOutput();
+    await logTask("Original", { mode: "plain", output }, () => {
       setCurrentTaskTitle("Updated");
 
       const store = storage.getStore()!;
@@ -323,10 +306,10 @@ Deno.test("context", async (t) => {
   await t.step(
     "logTask(fn) — title-less overload creates structural-only task",
     async () => {
-      const mock = createMockOutput();
+      const output = createMockOutput();
       await logTask(
         "Root",
-        { mode: "plain", output: mock.stream },
+        { mode: "plain", output },
         async () => {
           await logTask(() => {
             const store = storage.getStore()!;
@@ -340,10 +323,10 @@ Deno.test("context", async (t) => {
   await t.step(
     "logTask(options, fn) — title-less overload with options",
     async () => {
-      const mock = createMockOutput();
+      const output = createMockOutput();
       await logTask(
         "Root",
-        { mode: "plain", output: mock.stream },
+        { mode: "plain", output },
         async () => {
           await logTask(
             { tailLines: 2 },
@@ -361,10 +344,10 @@ Deno.test("context", async (t) => {
   await t.step(
     "title-less task children nest correctly under nearest titled ancestor",
     async () => {
-      const mock = createMockOutput();
+      const output = createMockOutput();
       await logTask(
         "Root",
-        { mode: "plain", output: mock.stream },
+        { mode: "plain", output },
         async () => {
           const rootStore = storage.getStore()!;
           const rootNode = rootStore.node!;
