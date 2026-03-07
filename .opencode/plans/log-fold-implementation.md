@@ -89,14 +89,16 @@ Already partially written. Core types and operations:
   `"pending" | "running" | "success" | "warning" | "fail" | "skipped"`
 - `TaskNode` interface: `id`, `title` (mutable — needed for `setTitle()`),
   `status`, `parent`, `children[]`, `logLines[]`, `error`, `startedAt`,
-  `finishedAt`
+  `finishedAt`, `tailLines?`, `spinner?`, `map?`, `filter?` (per-task display
+  options — stored on the node so `computeFrame()` can access them; see
+  `TaskOptions` for details)
 - `createTaskNode(title, parent?)` — factory, appends to parent's `children[]`
 - `startTask()`, `succeedTask()`, `warnTask()`, `failTask(error?)`, `skipTask()`
   — lifecycle transitions
 - `setTitle(node, title)` — update the node's display title in-place (renderer
   picks it up on the next tick)
-- `appendLog(node, text)` — log accumulation (splits on `\n`, handles trailing
-  newline)
+- `appendLog(node, line)` — pushes a single line to `logLines[]` (no splitting;
+  the caller — `log()` in `context.ts` — is responsible for splitting on `\n`)
 - `tailLogLines(node, n)` — last N lines for the tail window
 - `durationSec(node)` — returns `finishedAt - startedAt` for
   completed/failed/warned/skipped tasks, `Date.now() - startedAt` for running
@@ -173,23 +175,31 @@ export async function logTask<T>(
 
 /**
  * Append log output to the current task. Splits on newlines — multi-line
- * strings produce multiple log entries. If called outside any task context,
- * falls back to process.stderr.write() with a trailing newline appended
- * (if the text doesn't already end with one).
+ * strings produce multiple log entries. For each resulting line, calls
+ * appendLog(node, line) and renderer.onLog(node, line). appendLog is a
+ * trivial array push; log() owns the splitting and renderer notification.
+ *
+ * If called outside any task context, falls back to splitting on newlines
+ * and writing each line to process.stderr.write(line + "\n") — consistent
+ * with in-context behavior. Output is never lost.
  */
 export function log(text: string): void;
 
 /**
  * Mark the current task as completed with warnings.
- * When the logTask callback returns, the task's status is preserved as
- * "warning" instead of being overridden to "success".
+ * Sets status to "warning" without setting finishedAt (the task is still
+ * running). When the logTask callback returns, the finally block sets
+ * finishedAt and the status is preserved as "warning" instead of being
+ * overridden to "success".
  */
 export function setCurrentTaskWarning(): void;
 
 /**
  * Mark the current task as skipped. The logTask callback should return
- * immediately after calling this. The task's status is preserved as
- * "skipped" instead of being overridden to "success".
+ * immediately after calling this. Sets status to "skipped" without setting
+ * finishedAt. When the logTask callback returns, the finally block sets
+ * finishedAt and the status is preserved as "skipped" instead of being
+ * overridden to "success".
  */
 export function setCurrentTaskSkipped(): void;
 
@@ -202,11 +212,11 @@ export function setCurrentTaskTitle(title: string): void;
 
 Design choices for "outside context" behavior:
 
-| Function          | Outside context                                                                 |
-| :---------------- | :------------------------------------------------------------------------------ |
-| `logTask()`       | Auto-inits a session with defaults (or provided options). This becomes the root |
-| `log()`           | Falls back to `process.stderr.write(text + "\n")` — output is never lost        |
-| `logFromStream()` | Falls back to piping lines to `process.stderr` — output is never lost           |
+| Function          | Outside context                                                                                |
+| :---------------- | :--------------------------------------------------------------------------------------------- |
+| `logTask()`       | Auto-inits a session with defaults (or provided options). This becomes the root                |
+| `log()`           | Splits on `\n`, writes each line to `process.stderr.write(line + "\n")` — output is never lost |
+| `logFromStream()` | Falls back to piping lines to `process.stderr` — output is never lost                          |
 
 Sequential top-level `logTask()` calls (outside any context) each create their
 own independent render session. Each session starts and stops its own renderer.
@@ -262,6 +272,12 @@ export async function logTask(title, fnOrOptions, maybeFn?) {
       failTask(root, e instanceof Error ? e : new Error(String(e)));
       throw e;
     } finally {
+      // Ensure finishedAt is set for all terminal statuses (warn/skip
+      // set status during execution but don't set finishedAt — the task
+      // is still running at that point)
+      if (root.finishedAt === undefined) {
+        root.finishedAt = Date.now();
+      }
       session.renderer.onTaskEnd(root);
       session.renderer.stop();
     }
@@ -302,6 +318,10 @@ export async function logTask(title, fnOrOptions, maybeFn?) {
     failTask(child, e instanceof Error ? e : new Error(String(e)));
     throw e;
   } finally {
+    // Ensure finishedAt is set for all terminal statuses
+    if (child.finishedAt === undefined) {
+      child.finishedAt = Date.now();
+    }
     session.renderer.onTaskEnd(child);
   }
 }
@@ -780,7 +800,8 @@ needed.
 
 ##### Non-TTY detection
 
-`output.isTTY` at startup → selects TTY or plain renderer.
+When mode is `"auto"` (default): `output.isTTY` at startup → selects TTY or
+plain renderer.
 
 #### Plain renderer — sequential text output
 
@@ -860,6 +881,9 @@ export type TaskOptions = {
    * Filter log lines at display time. Return true to show, false to hide.
    * Applied after map. Original lines are preserved in logLines[] for error dumps.
    * When composed with ancestor tasks: child's filter runs first, then parent's.
+   *
+   * Tip: use `{ filter: () => false }` to suppress all log tail output for a
+   * task while still recording lines in logLines[] for error dumps.
    */
   filter?: (line: string) => boolean;
 };
@@ -876,7 +900,11 @@ export type LogTaskOptions = SessionOptions & TaskOptions;
 - **On `stop()`**: renderer dumps full `logLines[]` buffer for every failed
   task, printed after the final frame to the same output stream configured for
   the session (not hardcoded to stderr). This output is permanent (not
-  cursor-overwritten).
+  cursor-overwritten). Error dump format:
+  1. Ancestor chain path header: `--- Failed: Parent > Child > Grandchild ---`
+  2. All `logLines[]` from the failed task, indented with 4 spaces
+  3. Error message and stack trace (from `node.error`), indented with 4 spaces
+  4. Blank line separator between multiple failed tasks
 - **Top-level `logTask()` errors**: the error propagates after the renderer
   stops and the full log is dumped. Users should wrap top-level `logTask()` in
   try/catch if they want to handle errors gracefully, or let it crash with the
@@ -1010,12 +1038,21 @@ Uses `node:child_process` for runtime-agnostic subprocess execution.
 import type { SpawnOptions } from "node:child_process";
 
 type RunCommandOptions = Omit<SpawnOptions, "stdio"> & {
-  /** Whether to throw on non-zero exit code. Default: true. */
-  throwOnError?: boolean;
+  /**
+   * Behavior on non-zero exit code. Default: true.
+   * - true: throw an Error (task fails via the enclosing logTask catch)
+   * - "warn": don't throw, set the task to warning status (⚠)
+   * - false: don't throw, task stays success (✓)
+   */
+  throwOnError?: boolean | "warn";
 };
 
 type RunCommandResult = {
+  /** Exit code, or undefined if the process was killed by a signal.
+   *  Converted from node:child_process's null to undefined. */
   code: number | undefined;
+  /** Signal name if killed, or undefined if exited normally.
+   *  Converted from node:child_process's null to undefined. */
   signal: string | undefined;
   /** Captured stdout output (lines joined with "\n", .trim()'d). */
   stdout: string;
@@ -1051,10 +1088,13 @@ Implementation:
 4. Awaits process exit: wraps the `'close'` event in a Promise, which resolves
    with `{ code, signal, stdout }` after all stdio has ended and the process has
    exited
-5. Non-zero exit + `throwOnError !== false` → throws `Error(`Command failed with
-   exit code ${code}`)` (auto-fails the task via the enclosing `logTask` catch).
-   When `throwOnError` is `false`, non-zero exit returns the result without
-   throwing or failing the task.
+5. Non-zero exit handling depends on `throwOnError`:
+   - `true` (default): throws `Error(`Command failed with exit code ${code}`)` —
+     auto-fails the task via the enclosing `logTask` catch
+   - `"warn"`: calls `setCurrentTaskWarning()`, returns the result without
+     throwing — task shows ⚠ with the exit code visible in the log
+   - `false`: returns the result without throwing or changing task status — task
+     shows ✓
 
 ### Layer 8: `mod.ts` — public exports
 
@@ -1294,8 +1334,10 @@ real-time observation of span events during execution — the log tail window
 2. Remove `src/cli.ts` — unused empty shebang script, not part of the library
 3. `src/ansi.ts` — rewrite: keep only `hideCursor`/`showCursor` constants
 4. `src/task-node.ts` — update: add `warnTask`, `skipTask`, `setTitle`,
-   `findRunningLeaves`, `countTasks`, `logBytes`; remove `findDeepestRunning`
-   and `appendLogLines` (fold splitting logic into `appendLog`)
+   `findRunningLeaves`, `countTasks`, `logBytes`, per-task display option fields
+   (`tailLines?`, `spinner?`, `map?`, `filter?`); remove `findDeepestRunning`
+   and `appendLogLines`; simplify `appendLog` to a single-line push (splitting
+   moves to `log()` in `context.ts`)
 5. `src/renderer/` — `renderer.ts` (interface with `onLog`), `compute-frame.ts`
    (`computeFrame()` pure function), `tty-renderer.ts` (TTY renderer using
    `node:tty` `WriteStream` methods, render loop, cursor strategy),
