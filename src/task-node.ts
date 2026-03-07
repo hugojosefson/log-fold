@@ -2,16 +2,42 @@
  * TaskNode — the core data model for a task tree.
  *
  * Each node represents one task that can have children (sub-tasks).
- * The innermost running task accumulates log lines from its process output.
+ * Running leaf tasks accumulate log lines from their process output.
  */
 
+/** Spinner definition compatible with `cli-spinners` by sindresorhus. */
+export type Spinner = {
+  /** Frame interval in milliseconds. */
+  interval: number;
+  /** Animation frames, cycled on each render tick. */
+  frames: string[];
+};
+
+/** Options for configuring a task's display behavior. */
+export type TaskOptions = {
+  /** Number of log tail lines to show. Child tasks inherit from the nearest ancestor that sets this. */
+  tailLines?: number;
+  /** Spinner for this running task. Child tasks inherit from the nearest ancestor that sets this. */
+  spinner?: Spinner;
+  /** Transform each log line before display and in error dumps. */
+  map?: (line: string) => string;
+  /** Filter log lines at display time and in error dumps. Return true to show, false to hide. */
+  filter?: (line: string) => boolean;
+};
+
 /** Status of a task through its lifecycle. */
-export type TaskStatus = "pending" | "running" | "success" | "fail";
+export type TaskStatus =
+  | "pending"
+  | "running"
+  | "success"
+  | "warning"
+  | "fail"
+  | "skipped";
 
 /** A node in the task tree. */
-export interface TaskNode {
-  readonly id: string;
-  readonly title: string;
+export type TaskNode = {
+  /** Display title — undefined means structural-only (not rendered, children appear at parent's depth). */
+  title: string | undefined;
   status: TaskStatus;
   readonly parent: TaskNode | undefined;
   readonly children: TaskNode[];
@@ -25,17 +51,73 @@ export interface TaskNode {
   /** Timestamps for duration calculation. */
   startedAt: number | undefined;
   finishedAt: number | undefined;
-}
 
-let nextId = 0;
+  /** Number of tail lines to show. Resolved at creation time from nearest ancestor. */
+  readonly tailLines: number;
 
-/** Create a new task node. */
+  /** Spinner for running state. Resolved at creation time from nearest ancestor. */
+  readonly spinner: Spinner;
+
+  /**
+   * Composed map/filter chain for display.
+   * Local map → local filter → parent's composedFlatMap.
+   * Identity `(line) => [line]` when no map/filter on this task or any ancestor.
+   */
+  readonly composedFlatMap: (line: string) => string[];
+};
+
+const DEFAULT_TAIL_LINES = 6;
+
+const DEFAULT_SPINNER: Spinner = {
+  interval: 80,
+  frames: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
+};
+
+/** Identity flatMap — passes every line through unchanged. */
+const identityFlatMap = (line: string): string[] => [line];
+
+/** Create a new task node, appending to parent's children if given. */
 export function createTaskNode(
-  title: string,
+  title?: string,
   parent?: TaskNode,
+  options?: TaskOptions,
 ): TaskNode {
+  // Resolve tailLines: explicit option > nearest ancestor > default
+  const tailLines = options?.tailLines ??
+    parent?.tailLines ??
+    DEFAULT_TAIL_LINES;
+
+  // Resolve spinner: explicit option > nearest ancestor > default
+  const spinner = options?.spinner ??
+    parent?.spinner ??
+    DEFAULT_SPINNER;
+
+  // Compose map/filter into composedFlatMap
+  const parentFlatMap = parent?.composedFlatMap ?? identityFlatMap;
+  const localMap = options?.map;
+  const localFilter = options?.filter;
+
+  let composedFlatMap: (line: string) => string[];
+  if (localMap && localFilter) {
+    composedFlatMap = (line: string): string[] => {
+      const mapped = localMap(line);
+      if (!localFilter(mapped)) return [];
+      return parentFlatMap(mapped);
+    };
+  } else if (localMap) {
+    composedFlatMap = (line: string): string[] => {
+      return parentFlatMap(localMap(line));
+    };
+  } else if (localFilter) {
+    composedFlatMap = (line: string): string[] => {
+      if (!localFilter(line)) return [];
+      return parentFlatMap(line);
+    };
+  } else {
+    composedFlatMap = parentFlatMap;
+  }
+
   const node: TaskNode = {
-    id: `task-${nextId++}`,
     title,
     status: "pending",
     parent,
@@ -44,7 +126,11 @@ export function createTaskNode(
     error: undefined,
     startedAt: undefined,
     finishedAt: undefined,
+    tailLines,
+    spinner,
+    composedFlatMap,
   };
+
   if (parent) {
     parent.children.push(node);
   }
@@ -70,21 +156,14 @@ export function failTask(node: TaskNode, error?: Error): void {
   node.finishedAt = Date.now();
 }
 
-/** Append a log line to the task's buffer. */
-export function appendLog(node: TaskNode, line: string): void {
-  node.logLines.push(line);
+/** Update the node's display title in-place. */
+export function setTitle(node: TaskNode, title: string): void {
+  node.title = title;
 }
 
-/** Append multiple log lines (e.g. from splitting a chunk on newlines). */
-export function appendLogLines(node: TaskNode, text: string): void {
-  const lines = text.split("\n");
-  // If text ends with \n, the split produces a trailing empty string — skip it.
-  if (lines.length > 0 && lines[lines.length - 1] === "") {
-    lines.pop();
-  }
-  for (const line of lines) {
-    node.logLines.push(line);
-  }
+/** Push a single line to the task's log buffer. */
+export function appendLog(node: TaskNode, line: string): void {
+  node.logLines.push(line);
 }
 
 /** Get the last `n` log lines (the "tail window"). */
@@ -92,45 +171,73 @@ export function tailLogLines(node: TaskNode, n: number): string[] {
   return node.logLines.slice(-n);
 }
 
-/** Duration in seconds, or undefined if not started. */
-export function durationSec(node: TaskNode): number | undefined {
+/**
+ * Duration in milliseconds.
+ * Returns elapsed ms for running/completed tasks, undefined for pending.
+ */
+export function durationMillis(node: TaskNode): number | undefined {
   if (node.startedAt === undefined) return undefined;
   const end = node.finishedAt ?? Date.now();
-  return (end - node.startedAt) / 1000;
+  return end - node.startedAt;
 }
 
 /** Walk the tree depth-first, yielding each node and its depth. */
 export function* walkTree(
-  roots: TaskNode[],
+  root: TaskNode,
   depth = 0,
 ): Generator<{ node: TaskNode; depth: number }> {
-  for (const node of roots) {
-    yield { node, depth };
-    yield* walkTree(node.children, depth + 1);
+  yield { node: root, depth };
+  for (const child of root.children) {
+    yield* walkTree(child, depth + 1);
   }
 }
 
-/**
- * Find the deepest currently-running node in a tree.
- * This is the "innermost active task" whose log tail we display.
- */
-export function findDeepestRunning(
-  roots: TaskNode[],
-): TaskNode | undefined {
-  let deepest: TaskNode | undefined;
-  let maxDepth = -1;
-  for (const { node, depth } of walkTree(roots)) {
-    if (node.status === "running" && depth > maxDepth) {
-      deepest = node;
-      maxDepth = depth;
+/** Find all currently-running leaf nodes (no running children). */
+export function findRunningLeaves(root: TaskNode): TaskNode[] {
+  const leaves: TaskNode[] = [];
+  for (const { node } of walkTree(root)) {
+    if (node.status !== "running") continue;
+    const hasRunningChild = node.children.some((c) => c.status === "running");
+    if (!hasRunningChild) {
+      leaves.push(node);
     }
   }
-  return deepest;
+  return leaves;
 }
 
 /**
- * Get the chain of ancestors from root down to the given node (inclusive).
+ * Count total tasks and completed tasks in the tree.
+ * Title-less (structural-only) tasks are excluded from counts.
+ * "Completed" = any terminal status: success, warning, fail, or skipped.
  */
+export function countTasks(
+  root: TaskNode,
+): { total: number; completed: number } {
+  let total = 0;
+  let completed = 0;
+  for (const { node } of walkTree(root)) {
+    if (node.title === undefined) continue;
+    total++;
+    if (
+      node.status === "success" || node.status === "warning" ||
+      node.status === "fail" || node.status === "skipped"
+    ) {
+      completed++;
+    }
+  }
+  return { total, completed };
+}
+
+/** Total bytes of log output for a node. */
+export function logBytes(node: TaskNode): number {
+  let bytes = 0;
+  for (const line of node.logLines) {
+    bytes += line.length;
+  }
+  return bytes;
+}
+
+/** Get the chain of ancestors from root down to the given node (inclusive). */
 export function ancestorChain(node: TaskNode): TaskNode[] {
   const chain: TaskNode[] = [];
   let current: TaskNode | undefined = node;
