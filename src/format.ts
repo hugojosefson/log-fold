@@ -1,3 +1,5 @@
+import type { TasksProgress } from "./task-node.ts";
+
 /**
  * Formats a duration in milliseconds for display.
  *
@@ -19,4 +21,8 @@ export function formatDuration(ms: number): string {
 
   const h = Math.floor(m / 60);
   return `${h}h ${m % 60}m`;
+}
+
+export function formatTasksProgress(progress: TasksProgress) {
+  return `${progress.completed}/${progress.total}`;
 }

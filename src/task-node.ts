@@ -220,6 +220,8 @@ export function findRunningLeaves(root: TaskNode): TaskNode[] {
   return leaves;
 }
 
+export type TasksProgress = { total: number; completed: number };
+
 /**
  * Count total tasks and completed tasks in the tree.
  * Title-less (structural-only) tasks are excluded from counts.
@@ -227,7 +229,7 @@ export function findRunningLeaves(root: TaskNode): TaskNode[] {
  */
 export function countTasks(
   root: TaskNode,
-): { total: number; completed: number } {
+): TasksProgress {
   let total = 0;
   let completed = 0;
   for (const { node } of walkTree(root)) {

@@ -1,6 +1,6 @@
 import { cyan, dim, red, yellow } from "@std/fmt/colors";
 import stringWidth from "string-width";
-import { formatDuration } from "../format.ts";
+import { formatDuration, formatTasksProgress } from "../format.ts";
 import {
   countTasks,
   durationMillis,
@@ -43,8 +43,58 @@ function truncateLine(line: string, maxWidth: number): string {
   return result;
 }
 
+type TailAssignment = {
+  node: TaskNode;
+  lines: number;
+};
+
+type RankedLeaf = {
+  node: TaskNode;
+  score: number;
+};
+
+function calculateTailAssignments(
+  termHeight: number,
+  taskLines: string[],
+  rankedRunningLeaves: RankedLeaf[],
+): TailAssignment[] {
+  // Calculate available viewport lines
+  let free = termHeight - taskLines.length - 2;
+  if (free < 0) {
+    free = 0;
+  }
+
+  // Assign tail windows greedily
+  const tailAssignments: TailAssignment[] = [];
+  for (const { node } of rankedRunningLeaves) {
+    if (free <= 0) {
+      break;
+    }
+
+    const maxTail = node.tailLines;
+    if (maxTail === 0) {
+      continue;
+    }
+
+    const cost = maxTail + 1; // tail lines + visual padding
+    if (cost <= free) {
+      tailAssignments.push({ node, lines: maxTail });
+      free -= cost;
+      continue;
+    }
+
+    // Reduced allocation for the last candidate
+    const reduced = free - 1; // at least 1 line of tail
+    if (reduced > 0) {
+      tailAssignments.push({ node, lines: reduced });
+      free = 0;
+    }
+  }
+  return tailAssignments;
+}
+
 /**
- * Pure function that computes a frame for the TTY renderer.
+ * Computes a frame for the TTY renderer.
  * Reads per-task tailLines, spinner, composedFlatMap directly from each TaskNode.
  * Mutates displayCounts in place.
  */
@@ -118,11 +168,9 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
         const frame = spinner.frames[frameIndex];
 
         // Root running task shows (C/N) progress
-        let progress = "";
-        if (node.parent === undefined) {
-          const { completed, total } = countTasks(root);
-          progress = ` (${completed}/${total})`;
-        }
+        const progress = node.parent
+          ? ""
+          : ` (${formatTasksProgress(countTasks(root))})`;
 
         taskLines.push(
           truncateLine(
@@ -151,47 +199,22 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
   renderNode(root, 0);
 
   // Step 2: Log tail windows (competitive allocation)
-  const runningLeaves = findRunningLeaves(root).filter((n) =>
-    n.logLines.length > 0
-  );
+  const runningLeaves = findRunningLeaves(root)
+    .filter((n) => n.logLines.length > 0); // Only consider those with logs for tail display;
 
   // Rank by activity: logBytes + displayCount * 50
-  const ranked = runningLeaves
+  const rankedRunningLeaves = runningLeaves
     .map((node) => ({
       node,
       score: logBytes(node) + (displayCounts.get(node) ?? 0) * 50,
     }))
     .sort((a, b) => b.score - a.score);
 
-  // Calculate available viewport lines
-  let free = termHeight - taskLines.length - 2;
-  if (free < 0) {
-    free = 0;
-  }
-
-  // Assign tail windows greedily
-  const tailAssignments: { node: TaskNode; lines: number }[] = [];
-  for (const { node } of ranked) {
-    if (free <= 0) {
-      break;
-    }
-    const maxTail = node.tailLines;
-    if (maxTail === 0) {
-      continue;
-    }
-    const cost = maxTail + 1; // tail lines + visual padding
-    if (cost <= free) {
-      tailAssignments.push({ node, lines: maxTail });
-      free -= cost;
-    } else {
-      // Reduced allocation for the last candidate
-      const reduced = free - 1; // at least 1 line of tail
-      if (reduced > 0) {
-        tailAssignments.push({ node, lines: reduced });
-        free = 0;
-      }
-    }
-  }
+  const tailAssignments = calculateTailAssignments(
+    termHeight,
+    taskLines,
+    rankedRunningLeaves,
+  );
 
   // Update displayCounts for nodes whose tails are shown
   for (const { node } of tailAssignments) {
@@ -231,11 +254,9 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
       const assignment = tailAssignments.find((a) => a.node === node);
       if (assignment) {
         // Get tail lines through composedFlatMap
-        const mappedLines: string[] = [];
-        for (const rawLine of node.logLines) {
-          const result = node.composedFlatMap(rawLine);
-          mappedLines.push(...result);
-        }
+        const mappedLines: string[] = node.logLines
+          .flatMap(node.composedFlatMap);
+
         const tail = mappedLines.slice(-assignment.lines);
         for (const line of tail) {
           allLines.push(
@@ -262,7 +283,7 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
     // Third: never drop running tasks
 
     // Simple approach: keep lines up to termHeight, preserving running tasks
-    const trimmed = fitViewport(allLines, root, termHeight, termWidth);
+    const trimmed = fitViewport(allLines, termHeight);
     return { lines: trimmed };
   }
 
@@ -272,9 +293,7 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
 /** Fit lines to viewport height by dropping completed tasks. */
 function fitViewport(
   lines: string[],
-  _root: TaskNode,
   maxHeight: number,
-  _termWidth: number,
 ): string[] {
   // Simple truncation: take the last maxHeight lines to keep recent/running tasks visible
   if (lines.length <= maxHeight) {
