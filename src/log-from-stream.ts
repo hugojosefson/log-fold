@@ -39,31 +39,17 @@ function hasAsyncIterator(
 }
 
 /**
- * Pipe a single Node.js Readable into log(), collecting lines into the provided array.
+ * Pipe a single Node.js Readable into log(), collecting lines into any provided array.
  */
 function pipeReadable(
   readable: Readable,
-  collected: string[],
+  collected?: string[],
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const rl = createInterface({ input: readable });
     rl.on("line", (line) => {
       log(line);
-      collected.push(line);
-    });
-    rl.on("close", resolve);
-    rl.on("error", reject);
-  });
-}
-
-/**
- * Pipe a single Node.js Readable into log() without collecting (for stderr in StreamPair).
- */
-function pipeReadableNoCollect(readable: Readable): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const rl = createInterface({ input: readable });
-    rl.on("line", (line) => {
-      log(line);
+      collected?.push(line);
     });
     rl.on("close", resolve);
     rl.on("error", reject);
@@ -113,7 +99,7 @@ export async function logFromStream(
     }
     if (pair.stderr) {
       const readable = toReadable(pair.stderr);
-      promises.push(pipeReadableNoCollect(readable));
+      promises.push(pipeReadable(readable));
     }
     await Promise.all(promises);
     return collected.join("\n").trim();
