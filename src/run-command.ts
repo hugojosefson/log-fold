@@ -34,33 +34,22 @@ export async function runCommand(
   command: string[],
   options?: RunCommandOptions,
 ): Promise<RunCommandResult>;
+
 export async function runCommand(
   title: string,
   command: string[],
   options?: RunCommandOptions,
 ): Promise<RunCommandResult>;
-
 export function runCommand(
   titleOrCommand: string | string[],
   commandOrOptions?: string[] | RunCommandOptions,
   maybeOptions?: RunCommandOptions,
 ): Promise<RunCommandResult> {
-  let title: string;
-  let command: string[];
-  let options: RunCommandOptions | undefined;
-
-  if (Array.isArray(titleOrCommand)) {
-    // runCommand(command, options?)
-    command = titleOrCommand;
-    title = command.join(" ");
-    options = commandOrOptions as RunCommandOptions | undefined;
-  } else {
-    // runCommand(title, command, options?)
-    title = titleOrCommand;
-    command = commandOrOptions as string[];
-    options = maybeOptions;
-  }
-
+  const { title, command, options } = resolveRunCommandArgs(
+    titleOrCommand,
+    commandOrOptions,
+    maybeOptions,
+  );
   const { throwOnError = true, ...spawnOptions } = options ?? {};
 
   return logTask<RunCommandResult>(title, async () => {
@@ -95,4 +84,27 @@ export function runCommand(
 
     return result;
   });
+}
+
+function resolveRunCommandArgs(
+  titleOrCommand: string | string[],
+  commandOrOptions?: string[] | RunCommandOptions,
+  maybeOptions?: RunCommandOptions,
+): { title: string; command: string[]; options?: RunCommandOptions } {
+  if (Array.isArray(titleOrCommand)) {
+    // runCommand(command, options?)
+    const command = titleOrCommand;
+    return {
+      title: command.join(" "),
+      command,
+      options: commandOrOptions as RunCommandOptions | undefined,
+    };
+  }
+
+  // runCommand(title, command, options?)
+  return {
+    title: titleOrCommand,
+    command: commandOrOptions as string[],
+    options: maybeOptions,
+  };
 }
