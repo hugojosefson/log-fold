@@ -46,8 +46,8 @@ export async function logFromStream(
   // 2. StreamPair: has .stdout or .stderr AND input itself is NOT a stream
   if (isStreamPair(input)) {
     await Promise.all([
-      input.stdout && pipeAnyReadable(input.stdout, collected),
-      input.stderr && pipeAnyReadable(input.stderr),
+      pipeAnyReadable(input.stdout, collected),
+      pipeAnyReadable(input.stderr),
     ]);
     return collected.join("\n").trim();
   }
@@ -76,11 +76,14 @@ export async function logFromStream(
   throw new Error(`logFromStream: unrecognized input type: ${input}`);
 }
 
-/** Pipe a single AnyReadable stream, collecting lines into any supplied array. */
+/** Pipe any single AnyReadable stream, collecting lines into any supplied array. */
 function pipeAnyReadable(
-  stream: AnyReadable,
+  stream: AnyReadable | undefined,
   collected?: string[],
 ): Promise<void> {
+  if (!stream) {
+    return Promise.resolve();
+  }
   const readable = toReadable(stream);
   return pipeReadable(readable, collected);
 }
