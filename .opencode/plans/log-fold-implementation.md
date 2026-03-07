@@ -89,10 +89,16 @@ Already partially written. Core types and operations:
   `"pending" | "running" | "success" | "warning" | "fail" | "skipped"`
 - `TaskNode` interface: `id`, `title` (mutable — needed for `setTitle()`),
   `status`, `parent`, `children[]`, `logLines[]`, `error`, `startedAt`,
-  `finishedAt`, `tailLines?`, `spinner?`, `map?`, `filter?` (per-task display
-  options — stored on the node so `computeFrame()` can access them; see
-  `TaskOptions` for details)
-- `createTaskNode(title, parent?)` — factory, appends to parent's `children[]`
+  `finishedAt`, `tailLines?`, `spinner?`, `composedFlatMap?` (per-task display
+  options — stored on the node so `computeFrame()` can access them without
+  walking the ancestor chain on every render tick; see below)
+- `createTaskNode(title, parent?, taskOptions?)` — factory, appends to parent's
+  `children[]`. Computes and stores `composedFlatMap` at creation time by
+  composing the task's own `map`/`filter` with the parent's `composedFlatMap`:
+  local `map` runs first, then local `filter`, then `parent.composedFlatMap`.
+  Returns `string[]` (empty = filtered out, one element = mapped, multiple =
+  expanded). Also resolves `tailLines` and `spinner` by inheriting from the
+  nearest ancestor that sets them. These never change after task creation.
 - `startTask()`, `succeedTask()`, `warnTask()`, `failTask(error?)`, `skipTask()`
   — lifecycle transitions
 - `setTitle(node, title)` — update the node's display title in-place (renderer
@@ -191,6 +197,9 @@ export function log(text: string): void;
  * running). When the logTask callback returns, the finally block sets
  * finishedAt and the status is preserved as "warning" instead of being
  * overridden to "success".
+ *
+ * Implementation: sets node.status = "warning" directly — does NOT call
+ * warnTask() (which would also set finishedAt prematurely).
  */
 export function setCurrentTaskWarning(): void;
 
@@ -200,6 +209,9 @@ export function setCurrentTaskWarning(): void;
  * finishedAt. When the logTask callback returns, the finally block sets
  * finishedAt and the status is preserved as "skipped" instead of being
  * overridden to "success".
+ *
+ * Implementation: sets node.status = "skipped" directly — does NOT call
+ * skipTask() (which would also set finishedAt prematurely).
  */
 export function setCurrentTaskSkipped(): void;
 
@@ -212,11 +224,11 @@ export function setCurrentTaskTitle(title: string): void;
 
 Design choices for "outside context" behavior:
 
-| Function          | Outside context                                                                                |
-| :---------------- | :--------------------------------------------------------------------------------------------- |
-| `logTask()`       | Auto-inits a session with defaults (or provided options). This becomes the root                |
-| `log()`           | Splits on `\n`, writes each line to `process.stderr.write(line + "\n")` — output is never lost |
-| `logFromStream()` | Falls back to piping lines to `process.stderr` — output is never lost                          |
+| Function                               | Outside context                                                                                |
+| :------------------------------------- | :--------------------------------------------------------------------------------------------- |
+| `logTask()` (context.ts)               | Auto-inits a session with defaults (or provided options). This becomes the root                |
+| `log()` (context.ts)                   | Splits on `\n`, writes each line to `process.stderr.write(line + "\n")` — output is never lost |
+| `logFromStream()` (log-from-stream.ts) | Falls back to piping lines to `process.stderr` via `log()` — output is never lost              |
 
 Sequential top-level `logTask()` calls (outside any context) each create their
 own independent render session. Each session starts and stops its own renderer.
@@ -254,7 +266,7 @@ export async function logTask(title, fnOrOptions, maybeFn?) {
   if (!store) {
     // Top-level call — auto-init a session with defaults (or provided options)
     const session = new Session(options);
-    const root = createTaskNode(title);
+    const root = createTaskNode(title, undefined, options);
     session.roots.push(root);
     startTask(root);
     session.renderer.start(session.roots);
@@ -302,7 +314,7 @@ export async function logTask(title, fnOrOptions, maybeFn?) {
 
   // Nested call — create child under current context
   const { session, node: parent } = store;
-  const child = createTaskNode(title, parent);
+  const child = createTaskNode(title, parent, options);
   startTask(child);
   session.renderer.onTaskStart(child);
 
@@ -607,7 +619,7 @@ await logTask(
   { filter: (line) => !line.includes("SECRET") },
   async () => {
     log("connecting to server...");
-    log("using token: SECRET_abc123"); // stored in logLines but hidden from tail window
+    log("using token: SECRET_abc123"); // stored in logLines but hidden from display and error dumps
     log("deploy complete");
   },
 );
@@ -622,7 +634,7 @@ await logTask(
   "Build",
   { map: (line) => line.replace(/\/home\/user/g, "~") },
   async () => {
-    log("compiling /home/user/src/main.ts"); // displayed as "compiling ~/src/main.ts"
+    log("compiling /home/user/src/main.ts"); // displayed and dumped on error as "compiling ~/src/main.ts"
   },
 );
 ```
@@ -653,7 +665,10 @@ type Renderer = {
 All Renderer methods become no-ops after `stop()` is called. This handles the
 edge case where concurrent tasks continue writing after one branch throws and
 the parent's `logTask` calls `stop()`. Users should use `Promise.allSettled` if
-they need all branches to complete before the parent fails.
+they need all branches to complete before the parent fails. Any tasks still in
+`running` status when `stop()` is called remain in that status — the renderer
+does not modify task state. Handling orphaned running tasks (cancellation,
+aborting) is deferred to a future version (see "Cancellation" section).
 
 The renderer receives the `roots: TaskNode[]` reference on `start()` and reads
 the tree directly on each render tick. The `onTaskStart`/`onTaskEnd` callbacks
@@ -684,12 +699,15 @@ it (new log output is picked up on the next tick-based render frame).
 
 Extracted into a pure function `computeFrame(roots, options)` returning
 `{ lines: string[], displayCounts: Map<string, number> }` so it's testable
-without a terminal. `options` includes `tailLines`, `termWidth`, `termHeight`,
-`displayCounts: Map<string, number>`, `spinner`, and `now` (current timestamp,
-so tests can pass a fixed value and get deterministic spinner frames). The
-`displayCounts` map is passed into `computeFrame` and a new copy is returned
-(tracks how many frames each node's tail has been shown, providing "stickiness"
-so the display doesn't thrash between tasks' log windows).
+without a terminal. `options` includes `termWidth`, `termHeight`,
+`displayCounts: Map<string, number>`, and `now` (current timestamp, so tests can
+pass a fixed value and get deterministic spinner frames). Per-task `tailLines`,
+`spinner` and `composedFlatMap` are read from each `TaskNode` directly (resolved
+at task creation time). The `displayCounts` map is passed into `computeFrame`
+and a new copy is returned (tracks how many frames each node's tail has been
+shown, providing "stickiness" so the display doesn't thrash between tasks' log
+windows). The TtyRenderer persists this map as instance state, passing it into
+each `computeFrame()` call and updating it with the returned copy.
 
 Each render cycle produces a list of output lines:
 
@@ -807,25 +825,29 @@ plain renderer.
 
 For piped / non-TTY / CI output. No cursor movement, append-only.
 
-- On task start: `[Task Name] => started` (always prefixed with task name)
-- On log append: `[Task Name] line content`
-- On task end (success): `[Task Name] ✓ 1.2s`
-- On task end (warning): `[Task Name] ⚠ 1.2s`
-- On task end (fail): `[Task Name] ✗ ERROR  1.2s`, then dump full log
-- On task end (skipped): `[Task Name] ⊘ skipped`
+- On task start: `[Parent > Child] => started` (full ancestor path prefix)
+- On log append: `[Parent > Child] line content`
+- On task end (success): `[Parent > Child] ✓ 1.2s`
+- On task end (warning): `[Parent > Child] ⚠ 1.2s`
+- On task end (fail): `[Parent > Child] ✗ ERROR  1.2s`, then dump full log
+- On task end (skipped): `[Parent > Child] ⊘ skipped`
 
-Always prefix each line with the task name (like docker compose's
-`service | line` pattern). This keeps output unambiguous when concurrent tasks
-interleave:
+Always prefix each line with the full ancestor path (like docker compose's
+`service | line` pattern but extended for nested tasks). This keeps output
+unambiguous when concurrent tasks interleave, even if different subtrees have
+tasks with the same name:
 
 ```
-[Compile] => started
-[Test] => started
-[Compile] tsc --build
-[Test] running test suite...
-[Compile] ✓ 1.2s
-[Test] 5 tests passed
-[Test] ✓ 0.8s
+[CI > Install] => started
+[CI > Install] npm install...
+[CI > Install] ✓ 1.2s
+[CI > Compile] => started
+[CI > Test] => started
+[CI > Compile] tsc --build
+[CI > Test] running test suite...
+[CI > Compile] ✓ 1.2s
+[CI > Test] 5 tests passed
+[CI > Test] ✓ 0.8s
 ```
 
 ### Layer 5: `src/session.ts` — internal session management
@@ -861,7 +883,8 @@ export type SessionOptions = {
 
 export type TaskOptions = {
   /** Number of log tail lines to show for this task. Default: 6.
-   * Child tasks inherit from the nearest ancestor that sets this. */
+   * Child tasks inherit from the nearest ancestor that sets this.
+   * Resolved once at task creation by createTaskNode(). */
   tailLines?: number;
   /**
    * Spinner for this running task. Default: dots spinner
@@ -869,21 +892,25 @@ export type TaskOptions = {
    * from cli-spinners.
    * Pass any object matching `Spinner`, e.g. from the `cli-spinners` package.
    * Child tasks inherit from the nearest ancestor that sets this.
+   * Resolved once at task creation by createTaskNode().
    */
   spinner?: Spinner;
   /**
-   * Transform each log line before display. Applied at display time only —
-   * original lines are preserved in logLines[] for error dumps.
-   * When composed with ancestor tasks: child's map runs first, then parent's.
+   * Transform each log line before display and in error dumps.
+   * At task creation, composed with ancestor chain into a single
+   * `composedFlatMap: (line: string) => string[]` stored on the TaskNode.
+   * Composition order: local map → local filter → parent's composedFlatMap.
+   * computeFrame() and error dump code call composedFlatMap directly,
+   * no ancestor walking at render time.
    */
   map?: (line: string) => string;
   /**
-   * Filter log lines at display time. Return true to show, false to hide.
-   * Applied after map. Original lines are preserved in logLines[] for error dumps.
-   * When composed with ancestor tasks: child's filter runs first, then parent's.
+   * Filter log lines at display time and in error dumps. Return true to show,
+   * false to hide. Applied after map, before parent's composedFlatMap.
    *
-   * Tip: use `{ filter: () => false }` to suppress all log tail output for a
-   * task while still recording lines in logLines[] for error dumps.
+   * Tip: use `{ filter: () => false }` to suppress all log output for a
+   * task while still recording lines in logLines[] (the raw, unfiltered
+   * lines are always stored).
    */
   filter?: (line: string) => boolean;
 };
@@ -897,12 +924,15 @@ export type LogTaskOptions = SessionOptions & TaskOptions;
 - **Callback API**: thrown error → task fails, error stored on node. Error
   propagates up through the callback chain. The top-level `logTask()` catches
   it, calls `renderer.stop()`, then rethrows.
-- **On `stop()`**: renderer dumps full `logLines[]` buffer for every failed
-  task, printed after the final frame to the same output stream configured for
-  the session (not hardcoded to stderr). This output is permanent (not
-  cursor-overwritten). Error dump format:
+- **On `stop()`**: renderer renders one final frame, then dumps logs for every
+  failed task. Output goes to the same output stream configured for the session
+  (not hardcoded to stderr). This output is permanent (not cursor-overwritten).
+  Log lines are transformed through the task's `composedFlatMap` before output —
+  so secret redaction via `map`/`filter` applies to error dumps too, not just
+  the tail window. Error dump format:
   1. Ancestor chain path header: `--- Failed: Parent > Child > Grandchild ---`
-  2. All `logLines[]` from the failed task, indented with 4 spaces
+  2. Log lines from the failed task (after `composedFlatMap`), indented with 4
+     spaces
   3. Error message and stack trace (from `node.error`), indented with 4 spaces
   4. Blank line separator between multiple failed tasks
 - **Top-level `logTask()` errors**: the error propagates after the renderer
@@ -1149,13 +1179,18 @@ export type { RunCommandOptions, RunCommandResult } from "./src/run-command.ts";
 
 - `createTaskNode`: correct defaults (pending, no children, no logs)
 - `createTaskNode` with parent: appended to parent's children
+- `createTaskNode` with taskOptions: composedFlatMap stored on node
+- `createTaskNode` with parent having composedFlatMap: child's map+filter
+  composed with parent's composedFlatMap (local map → local filter →
+  parent.composedFlatMap)
+- `createTaskNode` tailLines/spinner inheritance: inherits from nearest ancestor
 - `startTask`: status → running, startedAt set
 - `succeedTask`: status → success, finishedAt set
 - `warnTask`: status → warning, finishedAt set
 - `failTask`: status → fail, error stored, finishedAt set
 - `skipTask`: status → skipped, finishedAt set
 - `setTitle`: updates node title in-place
-- `appendLog`: splits on `\n`, handles trailing newline
+- `appendLog`: pushes a single line to logLines[] (no splitting)
 - `tailLogLines`: returns last N lines, handles N > total
 - `durationSec`: returns elapsed, undefined if not started
 - `walkTree`: correct DFS order and depth values
@@ -1177,6 +1212,8 @@ Test the pure `computeFrame()` function directly.
 - Pending task → not shown
 - Concurrent running siblings → both expanded
 - Log tail window → last N lines shown for running leaf
+- Log tail window respects node.composedFlatMap (transforms and filters lines
+  before display)
 - Multiple concurrent leaves → competitive tail allocation by activity
 - Viewport overflow → completed tasks dropped, running tasks preserved
 - No tasks → empty frame
@@ -1193,9 +1230,10 @@ Test the pure `computeFrame()` function directly.
 - `logTask()` with options at top level configures the session
 - `logTask()` with session options at nested level throws an error
 - `logTask()` with per-task options (map/filter) at nested level works
-- map/filter compose: child's map runs first, then parent's map
-- map/filter are display-only — original lines preserved in logLines[]
-- filter: filtered lines not shown in tail window but preserved in logLines[]
+- map/filter compose: local map runs first, then local filter, then parent's
+  composedFlatMap (stored as composedFlatMap on the TaskNode at creation time)
+- map/filter apply to both tail window display and error dumps
+- original lines always preserved in logLines[] regardless of map/filter
 - `setCurrentTaskWarning()` sets task status to warning
 - `setCurrentTaskSkipped()` sets task status to skipped
 - `setCurrentTaskTitle()` updates task title
@@ -1206,6 +1244,11 @@ Test the pure `computeFrame()` function directly.
 - Concurrent tasks via `Promise.all`
 - Error → task fails, error captured, full log available
 - Nested error → propagates to parent
+- Error dump applies composedFlatMap (secrets redacted in dump)
+- Error dump preserves all lines that pass composedFlatMap
+- Concurrent error via Promise.all → orphaned sibling tasks remain in `running`
+  status (deferred to post-v1)
+- Promise.allSettled → all branches complete before parent handles errors
 
 Tests use a mock output stream passed via `logTask()` options.
 
@@ -1306,9 +1349,20 @@ through `node:` built-in modules:
 
 ## Cancellation (future, not v1)
 
-Out of scope for initial implementation. The user manages their own
-`AbortController`. Future extension point: `logTask()` could accept
-`{ signal: AbortSignal }` in options to propagate cancellation through the tree.
+Out of scope for initial implementation. This includes:
+
+- **Orphaned running tasks**: When `Promise.all` is used and one branch throws,
+  the parent's `logTask` callback exits and calls `stop()`. Sibling tasks that
+  are still running remain in `running` status — the renderer does not modify
+  task state. The final frame may show spinner symbols for these orphaned tasks.
+  Users who need all branches to finish before the parent handles errors should
+  use `Promise.allSettled` instead.
+- **AbortSignal propagation**: The user manages their own `AbortController`.
+  Future extension point: `logTask()` could accept `{ signal: AbortSignal }` in
+  options to propagate cancellation through the tree.
+- **`abortTask` lifecycle function**: A future `abortTask()` could force-fail
+  running nodes and mark them as aborted, distinguishing user-cancelled tasks
+  from genuine failures in the error dump.
 
 ## OpenTelemetry bridge (future, not v1)
 
@@ -1327,6 +1381,21 @@ The bridge is post-v1 because OTel's `SpanProcessor` API doesn't support
 real-time observation of span events during execution — the log tail window
 (log-fold's key feature) requires our own API for streaming log lines.
 
+## Confirmed design decisions (from plan review)
+
+| Decision                         | Choice                                                                                                                                                                                                                         |
+| :------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `logTask()` return type          | Always `Promise<T>`, even for sync callbacks. AsyncLocalStorage and renderer interactions require async.                                                                                                                       |
+| Declarative open/close API       | Not for v1. Callback-only ensures cleanup. Declarative handle API can be added later.                                                                                                                                          |
+| `getCurrentTask()` export        | Not for v1. `setCurrentTask*()` functions cover common cases; direct node access encourages tight coupling.                                                                                                                    |
+| `runCommand` default title       | No truncation. `command.join(" ")` as-is; users pass an explicit title for complex commands.                                                                                                                                   |
+| `logFromStream` return semantics | Implicit based on input shape (StreamPair → stdout only, single stream → all). Document clearly.                                                                                                                               |
+| `map`/`filter` in error dumps    | Both apply. Secrets redacted via `map`/`filter` are also redacted in error dumps. Raw `logLines[]` always preserved on the node.                                                                                               |
+| Plain renderer prefix            | Full ancestor path: `[Parent > Child > Leaf]` for unambiguous interleaved output.                                                                                                                                              |
+| `map`/`filter` composition       | Composed once at task creation time into a single `composedFlatMap: (line: string) => string[]` on the `TaskNode`. Composition: local map → local filter → parent's composedFlatMap. No ancestor chain walking at render time. |
+| Orphaned concurrent tasks        | Deferred to post-v1. On `stop()`, tasks still in `running` status remain as-is — the renderer does not modify task state. Users should use `Promise.allSettled` if they need all branches to finish.                           |
+| Progress bar / ETA               | Not for v1. The `(3/8)` count on the root task line is sufficient.                                                                                                                                                             |
+
 ## Implementation order
 
 1. `deno.jsonc` — add `@std/fmt`, `cli-spinners`, remove `@std/path`, update
@@ -1334,10 +1403,12 @@ real-time observation of span events during execution — the log tail window
 2. Remove `src/cli.ts` — unused empty shebang script, not part of the library
 3. `src/ansi.ts` — rewrite: keep only `hideCursor`/`showCursor` constants
 4. `src/task-node.ts` — update: add `warnTask`, `skipTask`, `setTitle`,
-   `findRunningLeaves`, `countTasks`, `logBytes`, per-task display option fields
-   (`tailLines?`, `spinner?`, `map?`, `filter?`); remove `findDeepestRunning`
-   and `appendLogLines`; simplify `appendLog` to a single-line push (splitting
-   moves to `log()` in `context.ts`)
+   `findRunningLeaves`, `countTasks`, `logBytes`; add `composedFlatMap?`,
+   `tailLines?`, `spinner?` fields to `TaskNode`;
+   `createTaskNode(title, parent?, taskOptions?)` composes map/filter into
+   `composedFlatMap` at creation time; remove `findDeepestRunning` and
+   `appendLogLines`; simplify `appendLog` to a single-line push (splitting moves
+   to `log()` in `context.ts`)
 5. `src/renderer/` — `renderer.ts` (interface with `onLog`), `compute-frame.ts`
    (`computeFrame()` pure function), `tty-renderer.ts` (TTY renderer using
    `node:tty` `WriteStream` methods, render loop, cursor strategy),
