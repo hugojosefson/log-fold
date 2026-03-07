@@ -1,7 +1,7 @@
 import process from "node:process";
 import type { WriteStream } from "node:tty";
-import type { Renderer } from "./renderer/renderer.ts";
 import { createPlainRenderer } from "./renderer/plain-renderer.ts";
+import type { Renderer } from "./renderer/renderer.ts";
 import { createTtyRenderer } from "./renderer/tty-renderer.ts";
 import type { TaskNode } from "./task-node.ts";
 
@@ -21,6 +21,12 @@ export type SessionOptions = {
    */
   output?: WriteStream | { write(s: string): boolean };
 };
+
+export const SESSION_OPTIONS_KEYS: (keyof SessionOptions)[] = [
+  "mode",
+  "tickInterval",
+  "output",
+] as const;
 
 /** Check if a stream has the required TTY WriteStream methods. */
 function isTtyWriteStream(

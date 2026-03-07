@@ -1,5 +1,9 @@
 import process from "node:process";
-import { Session, type SessionOptions } from "./session.ts";
+import {
+  Session,
+  SESSION_OPTIONS_KEYS,
+  type SessionOptions,
+} from "./session.ts";
 import { storage } from "./storage.ts";
 import {
   appendLog,
@@ -8,6 +12,7 @@ import {
   setTitle,
   startTask,
   succeedTask,
+  TASK_OPTIONS_KEYS,
   type TaskNode,
   type TaskOptions,
 } from "./task-node.ts";
@@ -138,20 +143,17 @@ export async function logTask<T>(
   }
 
   if (options) {
-    const sessionKeys = [
-      "mode",
-      "tickInterval",
-      "output",
-    ];
-    const hasSessionOptions = sessionKeys.some((k) => k in options);
+    const hasSessionOptions = SESSION_OPTIONS_KEYS.some((k) => k in options);
     if (hasSessionOptions) {
       throw new Error(
-        `Session options (mode, tickInterval, output) are only ` +
+        `Session options (${SESSION_OPTIONS_KEYS.join(", ")}) are only ` +
           `allowed at the top level${
             title ? ` (in logTask("${title}"))` : ""
           }. ` +
           `Nested logTask() calls inherit the session ` +
-          `from their parent. Per-task options (tailLines, spinner, map, filter) ` +
+          `from their parent. Per-task options (${
+            TASK_OPTIONS_KEYS.join(", ")
+          }) ` +
           `are allowed at any level.`,
       );
     }

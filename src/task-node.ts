@@ -25,6 +25,13 @@ export type TaskOptions = {
   filter?: (line: string) => boolean;
 };
 
+export const TASK_OPTIONS_KEYS: (keyof TaskOptions)[] = [
+  "tailLines",
+  "spinner",
+  "map",
+  "filter",
+];
+
 /** Status of a task through its lifecycle. */
 export type TaskStatus =
   | "pending"

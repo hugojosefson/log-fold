@@ -435,12 +435,12 @@ export async function logTask(titleOrFnOrOptions, fnOrOptions?, maybeFn?) {
   }
 
   if (options) {
-    const sessionKeys = [
+    const SESSION_OPTIONS_KEYS = [
       "mode",
       "tickInterval",
       "output",
     ];
-    const hasSessionOptions = sessionKeys.some((k) => k in options);
+    const hasSessionOptions = SESSION_OPTIONS_KEYS.some((k) => k in options);
     if (hasSessionOptions) {
       throw new Error(
         `Session options (mode, tickInterval, output) are only ` +
