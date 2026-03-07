@@ -43,6 +43,7 @@ nested units of work benefits.
 ```
 src/
 ├── ansi.ts               # Cursor hide/show constants (only what node:tty lacks)
+├── format.ts             # Display utilities (formatDuration) — pure functions, no rendering deps
 ├── task-node.ts          # TaskNode data model, tree operations
 ├── storage.ts            # AsyncLocalStorage instance + ContextStore type
 ├── session.ts            # Internal Session class (owns root, renderer)
@@ -95,21 +96,26 @@ Already partially written. Core types and operations:
 
 - `TaskStatus`:
   `"pending" | "running" | "success" | "warning" | "fail" | "skipped"`
-- `TaskNode` type: `title` (mutable — needed for `setTitle()`), `status`,
-  `parent`, `children[]`, `logLines[]`, `error`, `startedAt`, `finishedAt`,
-  `tailLines?`, `spinner?`, `composedFlatMap?` (per-task display options —
-  stored on the node so `computeFrame()` can access them without walking the
-  ancestor chain on every render tick; see below)
-- `createTaskNode(title, parent?, taskOptions?)` — factory, appends to parent's
+- `TaskNode` type: `title` (mutable — needed for `setTitle()`; `undefined` means
+  the task is structural-only and not rendered — its children appear at the
+  parent's depth level), `status`, `parent`, `children[]`, `logLines[]`,
+  `error`, `startedAt`, `finishedAt`, `tailLines?`, `spinner?`,
+  `composedFlatMap` (per-task display options — stored on the node so
+  `computeFrame()` can access them without walking the ancestor chain on every
+  render tick; see below)
+- `createTaskNode(title?, parent?, taskOptions?)` — factory, appends to parent's
   `children[]`. Computes and stores `composedFlatMap` at creation time by
   composing the task's own `map`/`filter` with the parent's `composedFlatMap`:
   local `map` runs first, then local `filter`, then `parent.composedFlatMap`.
   Returns `string[]` (empty = filtered out, one element = mapped, multiple =
   expanded). The multi-element case is not producible by the current
   `map`/`filter` signatures — this is intentional future-proofing for a
-  potential `flatMap` option. Do not simplify to `string | undefined`. Also
-  resolves `tailLines` and `spinner` by inheriting from the nearest ancestor
-  that sets them. These never change after task creation.
+  potential `flatMap` option. Do not simplify to `string | undefined`. **Default
+  when no map/filter on this task or any ancestor**: identity function
+  `(line: string) => [line]` — always set, never `undefined`. Renderer code
+  calls `composedFlatMap` unconditionally without null checks. Also resolves
+  `tailLines` and `spinner` by inheriting from the nearest ancestor that sets
+  them. These never change after task creation.
 - `startTask()`, `succeedTask()`, `warnTask()`, `failTask(error?)`, `skipTask()`
   — lifecycle transitions. **All are internal-only** (not exported from
   `mod.ts`). `warnTask()`/`skipTask()` set `finishedAt` immediately, which
@@ -124,10 +130,11 @@ Already partially written. Core types and operations:
 - `durationMillis(node)` — returns `finishedAt - startedAt` (in milliseconds)
   for completed/failed/warned/skipped tasks, `Date.now() - startedAt` for
   running tasks, `undefined` for pending tasks. Returns raw milliseconds — all
-  formatting is handled by `formatDuration()`.
-- `formatDuration(ms)` — formats a duration in milliseconds for display.
-  Auto-scales: `<10s` → `1.23s`, `10–60s` → `12.3s`, `60–3600s` → `1m 23s`,
-  `≥3600s` → `1h 2m`. Simple manual formatting (~10 lines), no Temporal API.
+  formatting is handled by `formatDuration()` in `src/format.ts`.
+- `formatDuration(ms)` — **lives in `src/format.ts`** (display utility, not data
+  model). Formats a duration in milliseconds for display. Auto-scales: `<10s` →
+  `1.23s`, `10–60s` → `12.3s`, `60–3600s` → `1m 23s`, `≥3600s` → `1h 2m`. Simple
+  manual formatting (~10 lines), no Temporal API.
 - `walkTree(root)` — depth-first generator yielding `{ node, depth }`, starting
   from the given root
 - `ancestorChain(node)` — path from root to given node
@@ -138,7 +145,9 @@ Additional functions needed for concurrency:
 /** Find all currently-running leaf nodes (no running children). */
 function findRunningLeaves(root: TaskNode): TaskNode[];
 
-/** Count total tasks and completed tasks in the tree. */
+/** Count total tasks and completed tasks in the tree.
+ *  Title-less (structural-only) tasks are excluded from counts —
+ *  (C/N) reflects only visible titled tasks. */
 function countTasks(root: TaskNode): { total: number; completed: number };
 
 /** Total bytes of log output for a node (for activity ranking). */
@@ -180,29 +189,46 @@ Module-level functions:
  * with default options — the renderer starts when this task starts
  * and stops when this task completes.
  *
+ * Title may be undefined — structural-only tasks are not rendered in the
+ * tree display. Their children appear at the parent's depth level. Useful
+ * for grouping/wrapping without adding visual noise.
+ *
  * Options are split into two categories:
  * - Session options (mode, output, tickInterval) only apply at the top
  *   level. The overload accepting `SessionOptions & TaskOptions` is for
  *   top-level calls; the overload accepting only `TaskOptions` is for
  *   nested calls. TypeScript enforces this at compile time — passing
  *   session options to a nested `logTask()` is a type error.
+ *   Runtime check retained as defense-in-depth for JavaScript callers
+ *   and compiled TypeScript where overloads are erased.
  * - Per-task options (tailLines, spinner, map, filter) are allowed at any
  *   nesting level. tailLines and spinner inherit from the nearest ancestor
  *   that sets them; map and filter compose with ancestor tasks' map/filter
  *   (child first, then parent).
  */
 export async function logTask<T>(
-  title: string,
   fn: () => T | Promise<T>,
 ): Promise<T>;
 export async function logTask<T>(
-  title: string,
+  options: TaskOptions,
+  fn: () => T | Promise<T>,
+): Promise<T>;
+export async function logTask<T>(
   options: SessionOptions & TaskOptions,
   fn: () => T | Promise<T>,
 ): Promise<T>;
 export async function logTask<T>(
-  title: string,
+  title: string | undefined,
+  fn: () => T | Promise<T>,
+): Promise<T>;
+export async function logTask<T>(
+  title: string | undefined,
   options: TaskOptions,
+  fn: () => T | Promise<T>,
+): Promise<T>;
+export async function logTask<T>(
+  title: string | undefined,
+  options: SessionOptions & TaskOptions,
   fn: () => T | Promise<T>,
 ): Promise<T>;
 
@@ -250,6 +276,11 @@ export function setCurrentTaskTitle(title: string): void;
 ```
 
 Design choices for "outside context" behavior:
+
+**Note**: when called outside any context, `log()` writes to `process.stderr`
+directly — not to a configurable output stream. This is by design: there is no
+session to read configuration from. The session's `output` option only applies
+to log lines rendered within a `logTask()` callback. Output is never lost.
 
 | Function                               | Outside context                                                                                |
 | :------------------------------------- | :--------------------------------------------------------------------------------------------- |
@@ -304,10 +335,35 @@ function taskHandle(
   };
 }
 
-export async function logTask(title, fnOrOptions, maybeFn?) {
-  // Overload dispatch
-  const options = typeof fnOrOptions === "function" ? undefined : fnOrOptions;
-  const fn = typeof fnOrOptions === "function" ? fnOrOptions : maybeFn;
+export async function logTask(titleOrFnOrOptions, fnOrOptions?, maybeFn?) {
+  // Overload dispatch: resolve (title, options, fn) from the 6 overload shapes.
+  // First arg can be: string|undefined (title), function (fn), or object (options).
+  let title: string | undefined;
+  let options: Record<string, unknown> | undefined;
+  let fn: () => unknown;
+
+  if (typeof titleOrFnOrOptions === "function") {
+    // logTask(fn)
+    title = undefined;
+    fn = titleOrFnOrOptions;
+  } else if (
+    typeof titleOrFnOrOptions === "object" &&
+    titleOrFnOrOptions !== null
+  ) {
+    // logTask(options, fn)
+    title = undefined;
+    options = titleOrFnOrOptions;
+    fn = fnOrOptions;
+  } else {
+    // logTask(title, ...) — title is string | undefined
+    title = titleOrFnOrOptions;
+    if (typeof fnOrOptions === "function") {
+      fn = fnOrOptions;
+    } else {
+      options = fnOrOptions;
+      fn = maybeFn;
+    }
+  }
 
   const store = storage.getStore();
 
@@ -772,6 +828,14 @@ Walk the task tree depth-first. For each node at a given `depth`:
 | `skipped`         | `⊘ Task Name` (single line, no duration)                   | dim                |
 | `pending`         | not shown                                                  | —                  |
 
+**Title-less tasks** (`title === undefined`): the task node itself is not
+rendered (no status line). Its children are rendered at the parent's depth level
+instead of indenting further. `walkTree` still visits the node, but
+`computeFrame` skips its own line and recurses into children without
+incrementing depth. For the plain renderer, title-less tasks are omitted from
+the ancestor path prefix (e.g., `[Root > Child]` not
+`[Root > undefined > Child]`).
+
 `<frame>` is the current spinner frame (cycled using
 `frames[Math.floor(now / spinner.interval) % frames.length]`). The spinner
 animation is decoupled from the render tick — it uses the spinner's own
@@ -884,12 +948,17 @@ as tasks complete, matching the TTY renderer's root-line progress:
 - On task end (fail): `[Root (C/N) > Child] ✗ ERROR  1.2s`, then dump full log
 - On task end (skipped): `[Root (C/N) > Child] ⊘ skipped`
 
-where `C` = completed tasks so far, `N` = total tasks created so far.
+where `C` = completed tasks so far, `N` = total tasks created so far. **Note**:
+`N` is monotonically increasing — it grows as new tasks are created during
+execution. Early lines may show `(0/2)` while later lines show `(2/5)` as more
+tasks are discovered. This is expected behavior, matching buildkit's approach.
 
 Always prefix each line with the full ancestor path (like docker compose's
-`service | line` pattern but extended for nested tasks). This keeps output
-unambiguous when concurrent tasks interleave, even if different subtrees have
-tasks with the same name:
+`service | line` pattern but extended for nested tasks). Title-less tasks
+(`title === undefined`) are omitted from the ancestor path — their children
+appear under the nearest titled ancestor. This keeps output unambiguous when
+concurrent tasks interleave, even if different subtrees have tasks with the same
+name:
 
 ```
 [CI (0/4)] => started
@@ -1114,12 +1183,15 @@ as "lines").
 
 1. Is it an `Array`? → process each element concurrently via `Promise.all`,
    collect all lines
-2. Has `.stdout` or `.stderr` property (and doesn't have `.pipe()` or
-   `.getReader()`)? → `StreamPair`: pipe both streams to `log()`, but only
-   collect stdout lines for the return value
-3. Has `.getReader()` method? → web `ReadableStream`, convert to Node.js
-   `Readable` via `Readable.fromWeb()`, then use `node:readline`
-4. Has `.pipe()` method? → Node.js `Readable`, use `node:readline` directly
+2. Has `.stdout` or `.stderr` property, AND the **input object itself** does not
+   have `.pipe()` or `.getReader()` (i.e., not a single stream that happens to
+   have stdout/stderr-like properties)? → `StreamPair`: pipe both streams to
+   `log()`, but only collect stdout lines for the return value
+3. Has `.getReader()` method (on the input object)? → web `ReadableStream`,
+   convert to Node.js `Readable` via `Readable.fromWeb()`, then use
+   `node:readline`
+4. Has `.pipe()` method (on the input object)? → Node.js `Readable`, use
+   `node:readline` directly
 5. Has `Symbol.asyncIterator` (and didn't match any above)? →
    `AsyncIterable<string>`, consume with
    `for await (const line of input) { log(line); collect(line); }`
@@ -1194,6 +1266,8 @@ Implementation:
 1. Calls `logTask(title, ...)` (AsyncLocalStorage) to create the sub-task
 2. Spawns via
    `spawn(command[0], command.slice(1), { ...options, stdio: ["ignore", "pipe", "pipe"] })`
+   **Note**: stdin is always `"ignore"`. Commands that need stdin input are out
+   of scope for `runCommand` — use `spawn()` + `logFromStream()` directly.
 3. Calls `logFromStream(child)` — both stdout and stderr are piped to `log()`
    for display, but only stdout lines are collected for the return value (this
    is `logFromStream`'s `StreamPair` behavior)
@@ -1301,6 +1375,8 @@ Test the pure `computeFrame()` function directly.
 - Viewport overflow → completed tasks dropped, running tasks preserved
 - No tasks → empty frame
 - Deeply nested → correct indentation at each level
+- Title-less task → not rendered, children shown at parent's depth (no extra
+  indentation)
 
 #### `test/context.test.ts` — AsyncLocalStorage context tests
 
@@ -1320,6 +1396,9 @@ Test the pure `computeFrame()` function directly.
 - `setCurrentTaskWarning()` sets task status to warning
 - `setCurrentTaskSkipped()` sets task status to skipped
 - `setCurrentTaskTitle()` updates task title
+- `logTask(fn)` — title-less overload creates structural-only task
+- `logTask(options, fn)` — title-less overload with options
+- Title-less task children nest correctly under nearest titled ancestor
 
 #### `test/log-fold.test.ts` — integration tests
 
@@ -1341,6 +1420,25 @@ Tests use a mock output stream passed via `logTask()` options.
 - Run a failing command → task fails
 - Stdout and stderr both captured
 - Auto-nests under current task
+
+#### `test/log-from-stream.test.ts` — stream piping tests
+
+- Node.js `Readable` → lines split correctly, all collected
+- Web `ReadableStream<Uint8Array>` → converted and split correctly
+- `StreamPair` (object with `.stdout` and `.stderr`) → both piped to `log()`,
+  only stdout lines in return value
+- `StreamPair` with only `.stderr` (no `.stdout`) → returns empty string, stderr
+  still piped to `log()`
+- `AsyncIterable<string>` → each yielded string passed to `log()`, multi-line
+  yields split correctly
+- `Array` of streams → processed concurrently, all lines collected
+- Input detection priority: Array > StreamPair > ReadableStream > Readable >
+  AsyncIterable (verify a Node.js Readable is not misidentified as
+  AsyncIterable)
+- Concurrent streams (stdout + stderr on StreamPair) → lines arrive in
+  event-loop order, no corruption
+- Empty stream → returns empty string
+- Outside task context → falls back to `process.stderr` via `log()`
 
 ### Layer 10: example and docs
 
@@ -1466,30 +1564,44 @@ real-time observation of span events during execution — the log tail window
 
 ## Confirmed design decisions (from plan review)
 
-| Decision                                   | Choice                                                                                                                                                                                                                                                   |
-| :----------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `logTask()` return type                    | Always `Promise<T>`, even for sync callbacks. AsyncLocalStorage and renderer interactions require async.                                                                                                                                                 |
-| Declarative open/close API                 | Not for v1. Callback-only ensures cleanup. Declarative handle API can be added later.                                                                                                                                                                    |
-| `getCurrentTask()` export                  | Not for v1. `setCurrentTask*()` functions cover common cases; direct node access encourages tight coupling.                                                                                                                                              |
-| `getCurrentTaskLogs()` export              | Not for v1. Users track their own state. Keep the API surface minimal.                                                                                                                                                                                   |
-| `runCommand` default title                 | No truncation. `command.join(" ")` as-is; users pass an explicit title for complex commands.                                                                                                                                                             |
-| `logFromStream` return semantics           | Implicit based on input shape (StreamPair → stdout only, single stream → all). Follows unix convention (stdout=data, stderr=diagnostics). Documented with rationale in JSDoc and README.                                                                 |
-| `map`/`filter` in error dumps              | Both apply (via `composedFlatMap`). Secrets redacted via `map`/`filter` are also redacted in error dumps. Raw `logLines[]` always preserved on the node. Use `tailLines: 0` (not `filter`) to hide output during execution while preserving error dumps. |
-| Plain renderer prefix                      | Full ancestor path with progress counts: `[Root (C/N) > Child > Leaf]` for unambiguous interleaved output with progress tracking.                                                                                                                        |
-| `map`/`filter` composition                 | Composed once at task creation time into a single `composedFlatMap: (line: string) => string[]` on the `TaskNode`. Composition: local map → local filter → parent's composedFlatMap. No ancestor chain walking at render time.                           |
-| `composedFlatMap` return type              | `string[]` — multi-element case is future-proofing for a potential `flatMap` option. Do not simplify to `string \| undefined`.                                                                                                                           |
-| Orphaned concurrent tasks                  | Deferred to post-v1. On `stop()`, tasks still in `running` status remain as-is — the renderer does not modify task state. Users should use `Promise.allSettled` if they need all branches to finish.                                                     |
-| Progress bar / ETA                         | Not for v1. The `(3/8)` count on the root task line is sufficient.                                                                                                                                                                                       |
-| Task lifecycle functions scope             | `startTask()`, `succeedTask()`, `warnTask()`, `failTask()`, `skipTask()` are internal-only — not exported from `mod.ts`. Public API uses `setCurrentTaskWarning()`/`setCurrentTaskSkipped()` which have different semantics.                             |
-| `logTask()` options types                  | Separate overloads: `SessionOptions & TaskOptions` for top-level, `TaskOptions` for nested. TypeScript enforces at compile time. Runtime check retained as defense-in-depth.                                                                             |
-| Session output validation                  | Session constructor validates `mode`/`output` combination at runtime: TTY mode requires `tty.WriteStream` with cursor methods. Throws clear error if violated.                                                                                           |
-| `displayCounts` storage                    | `WeakMap<TaskNode, number>` (not `Map`). Communicates ephemeral tracking intent and auto-cleans after session disposal.                                                                                                                                  |
-| Duration format                            | Auto-scale: `<10s` → `1.23s`, `10–60s` → `12.3s`, `≥60s` → `1m 23s`, `≥3600s` → `1h 2m`. Manual formatting, no Temporal API.                                                                                                                             |
-| `runCommand` warning target                | Warning is set on `runCommand`'s own subtask (not the caller's task). Subtask shows ⚠, parent can still succeed.                                                                                                                                         |
-| `setCurrentTaskWarning`/`Skipped` conflict | Last-write-wins. Calling both on the same task is allowed; the last call determines the final status. No throw on conflict.                                                                                                                              |
-| Task timeout                               | Out of scope for log-fold entirely (not just v1). Users manage timeouts externally via `AbortController`, `Promise.race`, etc.                                                                                                                           |
-| Silent/no-op mode                          | Not for v1. Libraries document their log-fold usage; consumers wrap in their own `logTask()` to control output.                                                                                                                                          |
-| Task metadata                              | Not for v1. Keep `TaskNode` lean. Add metadata when the OTel bridge is designed.                                                                                                                                                                         |
+| Decision                                   | Choice                                                                                                                                                                                                                                                             |
+| :----------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `logTask()` return type                    | Always `Promise<T>`, even for sync callbacks. AsyncLocalStorage and renderer interactions require async.                                                                                                                                                           |
+| Declarative open/close API                 | Not for v1. Callback-only ensures cleanup. Declarative handle API can be added later.                                                                                                                                                                              |
+| `getCurrentTask()` export                  | Not for v1. `setCurrentTask*()` functions cover common cases; direct node access encourages tight coupling.                                                                                                                                                        |
+| `getCurrentTaskLogs()` export              | Not for v1. Users track their own state. Keep the API surface minimal.                                                                                                                                                                                             |
+| `runCommand` default title                 | No truncation. `command.join(" ")` as-is; users pass an explicit title for complex commands.                                                                                                                                                                       |
+| `logFromStream` return semantics           | Implicit based on input shape (StreamPair → stdout only, single stream → all). Follows unix convention (stdout=data, stderr=diagnostics). Documented with rationale in JSDoc and README.                                                                           |
+| `map`/`filter` in error dumps              | Both apply (via `composedFlatMap`). Secrets redacted via `map`/`filter` are also redacted in error dumps. Raw `logLines[]` always preserved on the node. Use `tailLines: 0` (not `filter`) to hide output during execution while preserving error dumps.           |
+| Plain renderer prefix                      | Full ancestor path with progress counts: `[Root (C/N) > Child > Leaf]` for unambiguous interleaved output with progress tracking.                                                                                                                                  |
+| `map`/`filter` composition                 | Composed once at task creation time into a single `composedFlatMap: (line: string) => string[]` on the `TaskNode`. Composition: local map → local filter → parent's composedFlatMap. No ancestor chain walking at render time.                                     |
+| `composedFlatMap` return type              | `string[]` — multi-element case is future-proofing for a potential `flatMap` option. Do not simplify to `string \| undefined`.                                                                                                                                     |
+| Orphaned concurrent tasks                  | Deferred to post-v1. On `stop()`, tasks still in `running` status remain as-is — the renderer does not modify task state. Users should use `Promise.allSettled` if they need all branches to finish.                                                               |
+| Progress bar / ETA                         | Not for v1. The `(3/8)` count on the root task line is sufficient.                                                                                                                                                                                                 |
+| Task lifecycle functions scope             | `startTask()`, `succeedTask()`, `warnTask()`, `failTask()`, `skipTask()` are internal-only — not exported from `mod.ts`. Public API uses `setCurrentTaskWarning()`/`setCurrentTaskSkipped()` which have different semantics.                                       |
+| `logTask()` options types                  | Separate overloads: `SessionOptions & TaskOptions` for top-level, `TaskOptions` for nested. TypeScript enforces at compile time. Runtime check retained as defense-in-depth.                                                                                       |
+| Session output validation                  | Session constructor validates `mode`/`output` combination at runtime: TTY mode requires `tty.WriteStream` with cursor methods. Throws clear error if violated.                                                                                                     |
+| `displayCounts` storage                    | `WeakMap<TaskNode, number>` (not `Map`). Communicates ephemeral tracking intent and auto-cleans after session disposal.                                                                                                                                            |
+| Duration format                            | Auto-scale: `<10s` → `1.23s`, `10–60s` → `12.3s`, `≥60s` → `1m 23s`, `≥3600s` → `1h 2m`. Manual formatting, no Temporal API.                                                                                                                                       |
+| `runCommand` warning target                | Warning is set on `runCommand`'s own subtask (not the caller's task). Subtask shows ⚠, parent can still succeed.                                                                                                                                                   |
+| `setCurrentTaskWarning`/`Skipped` conflict | Last-write-wins. Calling both on the same task is allowed; the last call determines the final status. No throw on conflict.                                                                                                                                        |
+| Task timeout                               | Out of scope for log-fold entirely (not just v1). Users manage timeouts externally via `AbortController`, `Promise.race`, etc.                                                                                                                                     |
+| Silent/no-op mode                          | Not for v1. Libraries document their log-fold usage; consumers wrap in their own `logTask()` to control output.                                                                                                                                                    |
+| Task metadata                              | Not for v1. Keep `TaskNode` lean. Add metadata when the OTel bridge is designed.                                                                                                                                                                                   |
+| `composedFlatMap` default                  | Identity function `(line) => [line]` when no `map`/`filter` on this task or any ancestor. Always set, never `undefined`. Renderer calls it unconditionally without null checks.                                                                                    |
+| `formatDuration` location                  | In `src/format.ts` (separate display utility file), not in `task-node.ts`. Pure function, no rendering deps.                                                                                                                                                       |
+| Optional title                             | `logTask()` title is optional (`string \| undefined`). Title-less overloads allow calling `logTask(fn)` or `logTask(options, fn)` without passing `undefined`. Tasks with `undefined` title are structural-only — not rendered, children appear at parent's depth. |
+| `setCurrentTask*` naming                   | Keep verbose names (`setCurrentTaskWarning`, `setCurrentTaskSkipped`, `setCurrentTaskTitle`). Unambiguous, grep-friendly, no collision risk.                                                                                                                       |
+| `runCommand` stdin                         | Out of scope. Stdin hardcoded to `"ignore"`. Users needing stdin should use `spawn()` + `logFromStream()` directly. Documented in JSDoc.                                                                                                                           |
+| `log()` outside context target             | Writes to `process.stderr` directly (not a configurable stream). By design: no session exists to read config from. Documented explicitly in the plan.                                                                                                              |
+| Plain renderer dynamic N                   | `N` in `(C/N)` is monotonically increasing — grows as tasks are created. Early lines may show smaller N than later lines. Matches buildkit behavior.                                                                                                               |
+| `logTask()` nested session options check   | Runtime check retained as defense-in-depth for JavaScript callers and compiled TypeScript where overloads are erased. Documented in JSDoc.                                                                                                                         |
+| `logFromStream` tests                      | Dedicated `test/log-from-stream.test.ts` covering all input shapes, detection priority, StreamPair stdout-only collection, concurrent ordering, edge cases.                                                                                                        |
+| `TaskNode` interface → type                | Convert from `interface` to `type` per coding conventions. Noted in implementation step 5.                                                                                                                                                                         |
+| `displayCounts` Map vs WeakMap typo        | Fixed: implementation step 5 now correctly says `WeakMap<TaskNode, number>`, matching all other references.                                                                                                                                                        |
+| `logTask()` overload ordering              | `TaskOptions`-only overload listed before `SessionOptions & TaskOptions` to ensure correct TypeScript overload resolution (narrower type first). Title-less overloads listed before titled overloads.                                                              |
+| StreamPair detection wording               | Clarified: `.pipe()` / `.getReader()` checks are on the **input object itself**, not on its `.stdout`/`.stderr` properties.                                                                                                                                        |
+| Title-less tasks in progress count         | Excluded. `countTasks()` only counts titled tasks. `(C/N)` reflects visible tasks only.                                                                                                                                                                            |
 
 ## Implementation order
 
@@ -1497,37 +1609,47 @@ real-time observation of span events during execution — the log tail window
    exports (do this first so `@std/fmt` is available for all subsequent steps)
 2. Remove `src/cli.ts` — unused empty shebang script, not part of the library
 3. `src/ansi.ts` — rewrite: keep only `hideCursor`/`showCursor` constants
-4. `src/task-node.ts` — update: add `warnTask`, `skipTask`, `setTitle`,
-   `findRunningLeaves`, `countTasks`, `logBytes`; add `composedFlatMap?`,
-   `tailLines?`, `spinner?` fields to `TaskNode`; remove `id` field (use
-   `Map<TaskNode, number>` for displayCounts instead);
+4. `src/format.ts` — new file: `formatDuration()` display utility (extracted
+   from `task-node.ts`; pure function, no rendering deps)
+5. `src/task-node.ts` — update: convert `TaskNode` from `interface` to `type`
+   (per coding conventions — `interface` is never used); add `warnTask`,
+   `skipTask`, `setTitle`, `findRunningLeaves`, `countTasks`, `logBytes`; add
+   `composedFlatMap`, `tailLines?`, `spinner?` fields to `TaskNode`; remove `id`
+   field (use `WeakMap<TaskNode, number>` for displayCounts instead);
    `createTaskNode(title, parent?, taskOptions?)` composes map/filter into
-   `composedFlatMap` at creation time; remove `findDeepestRunning` and
+   `composedFlatMap` at creation time (identity function `(line) => [line]` when
+   no map/filter on this task or any ancestor); make `title` optional (see
+   "Optional title" in confirmed decisions); remove `findDeepestRunning` and
    `appendLogLines`; simplify `appendLog` to a single-line push (splitting moves
-   to `log()` in `context.ts`)
-5. `src/renderer/` — `renderer.ts` (Renderer type with `onLog`),
+   to `log()` in `context.ts`). Move `formatDuration()` to new `src/format.ts`
+   (display utility, not data model)
+6. `src/renderer/` — `renderer.ts` (Renderer type with `onLog`),
    `compute-frame.ts` (`computeFrame()` pure function), `tty-renderer.ts` (TTY
    renderer using `node:tty` `WriteStream` methods, render loop, cursor
    strategy), `plain-renderer.ts` (plain renderer with immediate `onLog` output)
-6. `src/storage.ts` — `AsyncLocalStorage` instance + `ContextStore` type.
+7. `src/storage.ts` — `AsyncLocalStorage` instance + `ContextStore` type.
    Type-only imports from this package (must come before `session.ts` since
    `session.ts` imports from it)
-7. `src/session.ts` — internal `Session` class, `LogTaskOptions`,
+8. `src/session.ts` — internal `Session` class, `LogTaskOptions`,
    `SessionOptions`, `TaskOptions`, `Spinner`. Renderer stored as a property.
    Imports `storage` from `./storage.ts`. Not exported from the package
-8. `src/context.ts` — module-level `logTask()` (with options overload), `log()`,
+9. `src/context.ts` — module-level `logTask()` (with options overload), `log()`,
    `setCurrentTaskWarning()`, `setCurrentTaskSkipped()`,
    `setCurrentTaskTitle()`. Imports `Session` from `./session.ts` and `storage`
    from `./storage.ts`
-9. `src/log-from-stream.ts` — stream piping with `AsyncIterable<string>` support
-10. `src/run-command.ts` — `runCommand(command)` or
+10. `src/log-from-stream.ts` — stream piping with `AsyncIterable<string>`
+    support
+11. `src/run-command.ts` — `runCommand(command)` or
     `runCommand(title, command, options?)`, uses `logTask()` internally
-11. `mod.ts` — public exports
-12. Remove `test/placeholder.test.ts` — replaced by real tests
-13. `test/task-node.test.ts`
-14. `test/context.test.ts`
-15. `test/renderer.test.ts`
-16. `test/log-fold.test.ts`
-17. `test/run-command.test.ts`
-18. `readme/example-usage.ts` + `readme/README.md`
-19. `deno task all` — validate
+12. `mod.ts` — public exports
+13. Remove `test/placeholder.test.ts` — replaced by real tests
+14. `test/task-node.test.ts`
+15. `test/context.test.ts`
+16. `test/renderer.test.ts`
+17. `test/log-from-stream.test.ts` — input detection (Readable, ReadableStream,
+    StreamPair, AsyncIterable, Array), line splitting, StreamPair stdout-only
+    collection, concurrent stream ordering
+18. `test/log-fold.test.ts`
+19. `test/run-command.test.ts`
+20. `readme/example-usage.ts` + `readme/README.md`
+21. `deno task all` — validate
