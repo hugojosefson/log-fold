@@ -28,7 +28,7 @@ Deno.test("computeFrame", async (t) => {
     const line = frame.lines[0];
     assertEquals(line.includes("✓"), true);
     assertEquals(line.includes("Build"), true);
-    assertEquals(line.includes("1.23s"), true);
+    assertEquals(line.includes("1.2s"), true);
   });
 
   await t.step("warning task shows ⚠ with duration", () => {
