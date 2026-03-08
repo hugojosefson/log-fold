@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file. See
 [fork-version](https://github.com/eglavin/fork-version) for commit guidelines.
 
+## 0.0.6 (2026-03-08)
+
+### Other Changes
+
+- sync build with scratchpad
+  ([e27c9d7](https://github.com/hugojosefson/log-fold/commit/e27c9d78b7be7e1b15bc09003da51fc2a4a4a783)),
+  closes [#5](https://github.com/hugojosefson/log-fold/issues/5)
+
 ## 0.0.5 (2026-03-08)
 
 ### Other Changes
