@@ -2,7 +2,7 @@
 
 [![JSR Version](https://jsr.io/badges/@hugojosefson/log-fold)](https://jsr.io/@hugojosefson/log-fold)
 [![JSR Score](https://jsr.io/badges/@hugojosefson/log-fold/score)](https://jsr.io/@hugojosefson/log-fold)
-[![CI](https://github.com/hugojosefson/log-fold/actions/workflows/ci.yaml/badge.svg)](https://github.com/hugojosefson/log-fold/actions/workflows/ci.yaml)
+[![CI](https://github.com/hugojosefson/log-fold/actions/workflows/release-and-publish.yaml/badge.svg)](https://github.com/hugojosefson/log-fold/actions/workflows/release-and-publish.yaml)
 
 Collapsing log tree for CLI output, inspired by Docker Buildkit's progress
 display. Tasks collapse to a single line when done; running tasks expand to show

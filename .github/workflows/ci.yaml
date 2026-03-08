@@ -1,11 +1,20 @@
 name: ci
 
 on:
+  workflow_call: {}
   pull_request:
     branches:
       - "*"
 
 jobs:
+  deno-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: denoland/setup-deno@v2
+      - run: deno fmt --check
+      - run: deno lint
+      - run: deno check
   deno-test:
     runs-on: ubuntu-latest
     steps:
@@ -57,11 +66,3 @@ jobs:
             bun run $i
             echo
           done
-  deno-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: denoland/setup-deno@v2
-      - run: deno fmt --check
-      - run: deno lint
-      - run: deno check
