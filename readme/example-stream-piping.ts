@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-run --allow-net=example.com --allow-env
+#!/usr/bin/env -S deno run --allow-run=find,npm --allow-net=example.com --allow-env
 import { log, logFromStream, logTask } from "../mod.ts";
 import { spawn } from "node:child_process";
 

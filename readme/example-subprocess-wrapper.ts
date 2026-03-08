@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-run=npm,npx --allow-env
+#!/usr/bin/env -S deno run --allow-run=npm --allow-env
 
 import { logTask } from "../mod.ts";
 import { runCommand } from "../src/run-command.ts";

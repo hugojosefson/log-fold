@@ -81,7 +81,7 @@ Non-zero exit codes throw by default. Control this with `throwOnError`:
 You may run the above example with:
 
 ```sh
-deno run --reload jsr:@hugojosefson/log-fold/example-subprocess-wrapper
+deno run --allow-run=npm --allow-env --reload jsr:@hugojosefson/log-fold/example-subprocess-wrapper
 ```
 
 ### Custom options
@@ -149,7 +149,7 @@ Pipe streams from any runtime's subprocess API (or any `ReadableStream`,
 You may run the above example with:
 
 ```sh
-deno run --reload jsr:@hugojosefson/log-fold/example-stream-piping
+deno run --allow-run=find,npm --allow-net=example.com --allow-env --reload jsr:@hugojosefson/log-fold/example-stream-piping
 ```
 
 ## Options reference
