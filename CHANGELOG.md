@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file. See
 [fork-version](https://github.com/eglavin/fork-version) for commit guidelines.
 
+## 0.0.13 (2026-03-08)
+
+### Other Changes
+
+- use node lts in ci
+  ([136e201](https://github.com/hugojosefson/log-fold/commit/136e201a255c955e09a0e74ec665331de9db0768))
+
 ## 0.0.12 (2026-03-08)
 
 ### Other Changes
