@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file. See
 [fork-version](https://github.com/eglavin/fork-version) for commit guidelines.
 
+## 0.0.14 (2026-03-08)
+
+### Other Changes
+
+- release requires tests
+  ([a29a948](https://github.com/hugojosefson/log-fold/commit/a29a948f194450fb6b91b0703566e337005c1fca))
+
 ## 0.0.13 (2026-03-08)
 
 ### Other Changes
