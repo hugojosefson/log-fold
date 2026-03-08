@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file. See
 [fork-version](https://github.com/eglavin/fork-version) for commit guidelines.
 
+## 0.0.10 (2026-03-08)
+
+### Other Changes
+
+- test examples with node, bun, deno
+  ([d0a51ad](https://github.com/hugojosefson/log-fold/commit/d0a51adb991b848eddaa9560cad992323a5c9971)),
+  closes [#2](https://github.com/hugojosefson/log-fold/issues/2)
+  [#6](https://github.com/hugojosefson/log-fold/issues/6)
+  [#7](https://github.com/hugojosefson/log-fold/issues/7)
+  [#15](https://github.com/hugojosefson/log-fold/issues/15)
+
 ## 0.0.9 (2026-03-08)
 
 ### Other Changes
