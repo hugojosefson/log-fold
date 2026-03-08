@@ -71,6 +71,12 @@ jobs:
         shell: bash
 
   release-and-publish:
+    needs:
+      - deno-check
+      - deno-test
+      - deno-examples
+      - node-examples
+      - bun-examples
     runs-on: ubuntu-latest
     permissions:
       contents: write
