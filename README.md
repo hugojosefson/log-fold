@@ -4,11 +4,11 @@
 [![JSR Score](https://jsr.io/badges/@hugojosefson/log-fold/score)](https://jsr.io/@hugojosefson/log-fold)
 [![CI](https://github.com/hugojosefson/log-fold/actions/workflows/release.yaml/badge.svg)](https://github.com/hugojosefson/log-fold/actions/workflows/release.yaml)
 
-Collapsing task tree for CLI output, inspired by Docker Buildkit's progress
+Collapsing log tree for CLI output, inspired by Docker Buildkit's progress
 display. Tasks collapse to a single line when done; running tasks expand to show
 sub-tasks and a tail window of log output. On error, the full log is dumped.
 
-Works with Deno, Node.js, and Bun. Uses `node:` built-in modules — no
+Works with Node.js, Deno, and Bun. Uses `node:` built-in modules — no
 runtime-specific APIs.
 
 ## Installation

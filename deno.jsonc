@@ -1,6 +1,7 @@
 {
   "name": "@hugojosefson/log-fold",
   "version": "0.0.5",
+  "description": "Collapsing log tree for CLI output, inspired by Docker Buildkit's progress display.",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
