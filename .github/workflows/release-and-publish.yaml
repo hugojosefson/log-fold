@@ -32,6 +32,7 @@ jobs:
             $i
             echo
           done
+        shell: bash
   node-examples:
     runs-on: ubuntu-latest
     env:
@@ -39,6 +40,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
+        with:
+          node-version: "lts/*"
       - run: jq -r '.imports | to_entries[] | .value as $v | if $v | startswith("jsr:") then "npx jsr add " + ($v[4:]) elif $v | startswith("npm:") then "npm install " + ($v[4:]) else empty end' deno.jsonc | sh
       - run: |
           set -euo pipefail
@@ -49,6 +52,7 @@ jobs:
             node $i
             echo
           done
+        shell: bash
   bun-examples:
     runs-on: ubuntu-latest
     steps:
@@ -64,6 +68,7 @@ jobs:
             bun run $i
             echo
           done
+        shell: bash
 
   release-and-publish:
     runs-on: ubuntu-latest
