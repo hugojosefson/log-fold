@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file. See
 [fork-version](https://github.com/eglavin/fork-version) for commit guidelines.
 
+## 0.0.9 (2026-03-08)
+
+### Other Changes
+
+- **readme:** fix example running permissions
+  ([a5b1a67](https://github.com/hugojosefson/log-fold/commit/a5b1a6702dfc5bf705d945cc4b7593814a779b61))
+
 ## 0.0.8 (2026-03-08)
 
 ### Other Changes
