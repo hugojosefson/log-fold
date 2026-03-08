@@ -1,0 +1,30 @@
+# Template Dependabot configuration file
+# Documentation: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  # Maintain dependencies for Docker
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      time: "04:00"
+      timezone: "Europe/Stockholm"
+    open-pull-requests-limit: 20
+    assignees:
+      - "hugojosefson"
+    commit-message:
+      prefix: "chore:"
+
+  # Maintain dependencies for GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      time: "04:00"
+      timezone: "Europe/Stockholm"
+    open-pull-requests-limit: 20
+    assignees:
+      - "hugojosefson"
+    commit-message:
+      prefix: "chore:"

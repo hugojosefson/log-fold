@@ -1,10 +1,9 @@
-name: deno
+name: deno-ci
 
 on:
   pull_request:
-  push:
-    branches-ignore:
-      - main
+    branches:
+      - "*"
 
 jobs:
   test:

@@ -1,13 +1,19 @@
 name: bump-deps
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "0 0 * * *" # midnight UTC
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+  push:
+    branches:
+      - "main"
 
 jobs:
-  molt:
+  bump-deps:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: hasundue/molt-action@v1
+        with:
+          branch: "bump-deps"
+          token: "${{ secrets.BUMP_DEPS_TOKEN }}"

@@ -15,20 +15,19 @@
     "./example-warning-skipped-dynamic-title": "./readme/example-warning-skipped-dynamic-title.ts"
   },
   "tasks": {
-    "default": "       deno fmt && deno lint --fix && (deno check & deno task test) && deno task readme",
-    "all": "           deno task default && deno publish --dry-run",
-    "test": "          deno test --allow-all --parallel --trace-leaks --coverage",
-    "dev": "           deno test --allow-all --parallel --trace-leaks --watch",
-    "coverage": "      deno coverage",
-    "readme": "        touch README.md && chmod +w README.md && ./readme/generate-readme.ts readme/README.md > README.md && deno fmt README.md; chmod -w README.md",
-    "git-is-clean": "  test -z \"$(git status --porcelain)\"",
-    "version": "       deno --allow-all npm:fork-version@4.1.0 --inspect-version",
-    "release": "       echo 'ERROR: Not usually a good idea to do the release locally. Instead, push the main branch, and let the release workflow perform the actual release.'; exit 2",
-    "release:run": "   deno task release:ready && deno task release:commit && deno task release:tag && deno task release:push",
-    "release:ready": " deno task git-is-clean && deno task default && deno task git-is-clean",
-    "release:commit": "deno --allow-all npm:fork-version@4.1.0 --changelog-all --tag-prefix='' --skip-tag && deno fmt CHANGELOG.md && git add CHANGELOG.md && git commit --amend --no-edit",
-    "release:tag": "   git tag $(deno task version)",
-    "release:push": "  git push origin main $(deno task version)"
+    "all": "                   deno fmt && deno lint --fix && (deno check & deno publish --dry-run --allow-dirty & deno task test) && deno task readme && echo 'Available dependency bumps:' && deno task bump-deps:list",
+    "test": "                  rm -rf coverage && deno test --allow-env --allow-run=echo,false,sh --parallel --trace-leaks --coverage && deno coverage --lcov --output=coverage/lcov.info",
+    "bump-deps:list": "        deno --allow-env --allow-read --allow-write=$HOME/.local/share/deno-wasmbuild,. --allow-run=git,deno --allow-net=jsr.io,registry.npmjs.org jsr:@molt/cli@0.19.8",
+    "bump-deps:write": "       deno task -q bump-deps:list --write",
+    "bump-deps:commit": "      deno task -q bump-deps:list --commit --pre-commit=test --prefix=chore:",
+    "git-is-clean": "          test -z \"$(git status --porcelain)\"",
+    "readme": "                touch README.md && chmod +w README.md && ./readme/generate-readme.ts readme/README.md > README.md && deno fmt README.md; chmod -w README.md",
+    "release": "               deno task release:ready-to-start && deno task release:commit && deno task release:tag && deno task release:push",
+    "release:ready-to-start": "deno task git-is-clean && deno task all && deno task git-is-clean && deno publish --dry-run",
+    "release:tag": "           git tag              $(deno task version)",
+    "release:push": "          git push origin main $(deno task version)",
+    "release:commit": "        deno --allow-all npm:fork-version@4.1.4 --changelog-all --tag-prefix='' --skip-tag && deno fmt CHANGELOG.md && git add CHANGELOG.md && git commit --amend --no-edit",
+    "version": "               deno --allow-all npm:fork-version@4.1.4 --inspect-version"
   },
   "fmt": {
     "useBraces": "always",
