@@ -3,6 +3,16 @@
 All notable changes to this project will be documented in this file. See
 [fork-version](https://github.com/eglavin/fork-version) for commit guidelines.
 
+## 0.0.5 (2026-03-08)
+
+### Other Changes
+
+- export all examples, show how to run in readme
+  ([e8c6e1c](https://github.com/hugojosefson/log-fold/commit/e8c6e1c8932e4a067b748626521add57382624bd)),
+  closes [#11](https://github.com/hugojosefson/log-fold/issues/11)
+  [#12](https://github.com/hugojosefson/log-fold/issues/12)
+  [#8](https://github.com/hugojosefson/log-fold/issues/8)
+
 ## 0.0.4 (2026-03-08)
 
 ### Other Changes
