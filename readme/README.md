@@ -49,22 +49,7 @@ Tasks inside `Promise.all` run simultaneously. Each branch has its own async
 context, so `log()` calls go to the correct task.
 
 ```typescript
-import { log, logTask } from "@hugojosefson/log-fold";
-
-await logTask("CI", async () => {
-  await logTask("Install", async () => {
-    log("npm install...");
-  });
-
-  await Promise.all([
-    logTask("Compile", async () => {
-      log("tsc --build");
-    }),
-    logTask("Lint", async () => {
-      log("eslint src/");
-    }),
-  ]);
-});
+"@@include(./example-concurrent-tasks.ts)";
 ```
 
 ### Subprocess wrapper
@@ -73,13 +58,7 @@ await logTask("CI", async () => {
 captured stdout. It auto-creates a `logTask` with the command as the title.
 
 ```typescript
-import { logTask } from "@hugojosefson/log-fold";
-import { runCommand } from "@hugojosefson/log-fold/run-command";
-
-await logTask("Build", async () => {
-  await runCommand(["npm", "install"]);
-  await runCommand("TypeScript compile", ["npx", "tsc", "--build"]);
-});
+"@@include(./example-subprocess-wrapper.ts)";
 ```
 
 The first argument can be an explicit title or the command array. When passing
@@ -98,13 +77,7 @@ Non-zero exit codes throw by default. Control this with `throwOnError`:
 Pass session and per-task options to the top-level `logTask()`:
 
 ```typescript
-import { log, logTask } from "@hugojosefson/log-fold";
-
-await logTask("Deploy", { tailLines: 10, mode: "plain" }, async () => {
-  await logTask("Upload assets", async () => {
-    log("uploading...");
-  });
-});
+"@@include(./example-custom-options.ts)";
 ```
 
 Per-task options (`tailLines`, `spinner`, `map`, `filter`) can be passed at any
@@ -114,42 +87,7 @@ allowed at the top level — passing them to a nested `logTask()` throws.
 ### Warning, skipped, and dynamic title
 
 ```typescript
-import {
-  log,
-  logTask,
-  setCurrentTaskSkipped,
-  setCurrentTaskTitle,
-  setCurrentTaskWarning,
-} from "@hugojosefson/log-fold";
-
-await logTask("Pipeline", async () => {
-  // Warning status — task shows ⚠ instead of ✓
-  await logTask("Deploy", async () => {
-    const result = await deploy();
-    if (result.deprecationWarnings.length > 0) {
-      log(`${result.deprecationWarnings.length} deprecation warnings`);
-      setCurrentTaskWarning();
-    }
-  });
-
-  // Skip status — task shows ⊘ instead of ✓
-  await logTask("Build cache", async () => {
-    if (await cacheExists()) {
-      setCurrentTaskSkipped();
-      return;
-    }
-    // ... build cache ...
-  });
-
-  // Dynamic title — updated on the next render tick
-  await logTask("Download", async () => {
-    const files = await listFiles();
-    for (const [i, file] of files.entries()) {
-      setCurrentTaskTitle(`Download (${i + 1}/${files.length})`);
-      await downloadFile(file);
-    }
-  });
-});
+"@@include(./example-warning-skipped-dynamic-title.ts)";
 ```
 
 ### Filtering and mapping log lines
@@ -159,27 +97,7 @@ Transform or filter log lines before display and error dumps using `map` and
 apply first, then parent transforms.
 
 ```typescript
-import { log, logTask } from "@hugojosefson/log-fold";
-
-// Redact secrets — filtered lines are hidden from display AND error dumps
-await logTask(
-  "Deploy",
-  { filter: (line) => !line.includes("SECRET") },
-  async () => {
-    log("connecting to server...");
-    log("using token: SECRET_abc123"); // hidden everywhere
-    log("deploy complete");
-  },
-);
-
-// Rewrite paths — applies to display and error dumps
-await logTask(
-  "Build",
-  { map: (line) => line.replace(/\/home\/user/g, "~") },
-  async () => {
-    log("compiling /home/user/src/main.ts"); // shown as "compiling ~/src/main.ts"
-  },
-);
+"@@include(./example-filtering-mapping.ts)";
 ```
 
 ### Stream piping with `logFromStream`
@@ -188,31 +106,7 @@ Pipe streams from any runtime's subprocess API (or any `ReadableStream`,
 `Readable`, or `AsyncIterable`) into the current task's log.
 
 ```typescript
-import { logFromStream, logTask } from "@hugojosefson/log-fold";
-
-// Node.js child_process
-import { spawn } from "node:child_process";
-
-await logTask("My process", async () => {
-  const child = spawn("my-tool", ["--flag"]);
-  const output = await logFromStream(child);
-});
-
-// Deno.Command
-await logTask("Build", async () => {
-  const child = new Deno.Command("npm", {
-    args: ["install"],
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  await logFromStream(child);
-});
-
-// Single ReadableStream (e.g. fetch response)
-await logTask("Fetch logs", async () => {
-  const response = await fetch("https://example.com/logs");
-  await logFromStream(response.body!);
-});
+"@@include(./example-stream-piping.ts)";
 ```
 
 > **StreamPair return semantics**: when you pass a process-like object (has

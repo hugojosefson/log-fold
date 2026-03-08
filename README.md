@@ -78,15 +78,15 @@ context, so `log()` calls go to the correct task.
 import { log, logTask } from "@hugojosefson/log-fold";
 
 await logTask("CI", async () => {
-  await logTask("Install", async () => {
+  await logTask("Install", () => {
     log("npm install...");
   });
 
   await Promise.all([
-    logTask("Compile", async () => {
+    logTask("Compile", () => {
       log("tsc --build");
     }),
-    logTask("Lint", async () => {
+    logTask("Lint", () => {
       log("eslint src/");
     }),
   ]);
@@ -102,9 +102,12 @@ captured stdout. It auto-creates a `logTask` with the command as the title.
 import { logTask } from "@hugojosefson/log-fold";
 import { runCommand } from "@hugojosefson/log-fold/run-command";
 
-await logTask("Build", async () => {
-  await runCommand(["npm", "install"]);
-  await runCommand("TypeScript compile", ["npx", "tsc", "--build"]);
+await logTask("Run innocuous npm commands", async () => {
+  await runCommand(["npm", "search", "typescript"]);
+  await runCommand("Printing the shell completion script for npm", [
+    "npm",
+    "completion",
+  ]);
 });
 ```
 
@@ -127,7 +130,7 @@ Pass session and per-task options to the top-level `logTask()`:
 import { log, logTask } from "@hugojosefson/log-fold";
 
 await logTask("Deploy", { tailLines: 10, mode: "plain" }, async () => {
-  await logTask("Upload assets", async () => {
+  await logTask("Upload assets", () => {
     log("uploading...");
   });
 });
@@ -176,6 +179,20 @@ await logTask("Pipeline", async () => {
     }
   });
 });
+
+// stub functions
+function deploy() {
+  return Promise.resolve({ deprecationWarnings: [] });
+}
+function cacheExists() {
+  return Promise.resolve(false);
+}
+function listFiles() {
+  return Promise.resolve(["file1.txt", "file2.txt"]);
+}
+async function downloadFile(_file: string) {
+  await Promise.resolve();
+}
 ```
 
 ### Filtering and mapping log lines
@@ -191,7 +208,7 @@ import { log, logTask } from "@hugojosefson/log-fold";
 await logTask(
   "Deploy",
   { filter: (line) => !line.includes("SECRET") },
-  async () => {
+  () => {
     log("connecting to server...");
     log("using token: SECRET_abc123"); // hidden everywhere
     log("deploy complete");
@@ -202,7 +219,7 @@ await logTask(
 await logTask(
   "Build",
   { map: (line) => line.replace(/\/home\/user/g, "~") },
-  async () => {
+  () => {
     log("compiling /home/user/src/main.ts"); // shown as "compiling ~/src/main.ts"
   },
 );
@@ -214,25 +231,41 @@ Pipe streams from any runtime's subprocess API (or any `ReadableStream`,
 `Readable`, or `AsyncIterable`) into the current task's log.
 
 ```typescript
-import { logFromStream, logTask } from "@hugojosefson/log-fold";
-
-// Node.js child_process
+import { log, logFromStream, logTask } from "@hugojosefson/log-fold";
 import { spawn } from "node:child_process";
 
+// Node.js child_process
 await logTask("My process", async () => {
-  const child = spawn("my-tool", ["--flag"]);
-  const output = await logFromStream(child);
+  const child = spawn("find", [".", "-type", "f"]);
+  const _output = await logFromStream(child);
 });
 
 // Deno.Command
-await logTask("Build", async () => {
-  const child = new Deno.Command("npm", {
-    args: ["install"],
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  await logFromStream(child);
-});
+try {
+  await logTask("Install npm deps", async () => {
+    log("Create custom child process");
+    const child = new Deno.Command("npm", {
+      args: ["install"],
+      stdout: "piped",
+      stderr: "piped",
+    }).spawn();
+
+    await logTask("Pipe its output to the log", async () => {
+      await logFromStream(child);
+    });
+
+    await logTask("Wait for custom process to end", async () => {
+      const status = await child.status;
+      if (!status.success) {
+        throw new Error(JSON.stringify(status));
+      }
+    });
+  });
+} catch {
+  console.error(
+    `<<< Swallowing error from "Install npm deps", because we expect "npm install" to fail if there is no "package.json", and so that the next example can run: >>>`,
+  );
+}
 
 // Single ReadableStream (e.g. fetch response)
 await logTask("Fetch logs", async () => {

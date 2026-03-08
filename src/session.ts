@@ -6,18 +6,17 @@ import { createTtyRenderer } from "./renderer/tty-renderer.ts";
 import type { WriteStreamLike } from "./renderer/write-stream-like.ts";
 import type { TaskNode } from "./task-node.ts";
 
-// Re-export types from task-node.ts for convenience
-export type { Spinner, TaskOptions } from "./task-node.ts";
+export type Mode = "tty" | "plain" | "auto";
 
 /** Session configuration options. Only apply at the top-level logTask() call. */
 export type SessionOptions = {
-  /** Force TTY or plain mode. Default: "auto" (detect via isTTY). */
-  mode?: "tty" | "plain" | "auto";
+  /** Attempt to force TTY or plain mode. Default: "auto" (detect via isTTY). */
+  mode?: Mode;
   /** Render tick interval in ms. Default: 150. */
   tickInterval?: number;
   /**
    * Output stream. Default: process.stderr.
-   * When mode is "tty", must be a tty.WriteStream (for cursor methods).
+   * When mode is "tty", must be a tty.WriteStream (for cursor methods), otherwise "plain" will be used instead.
    * When mode is "plain", any Writable with write() works.
    */
   output?: WriteStream | WriteStreamLike;
@@ -44,6 +43,18 @@ function isTtyWriteStream(
   );
 }
 
+function shouldUseTty(
+  mode: Mode,
+  output: WriteStream | WriteStreamLike,
+): output is WriteStream {
+  if (mode === "auto" || mode === "tty") {
+    if (isTtyWriteStream(output)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Internal Session class — owns the task tree and renderer. */
 export class Session {
   root!: TaskNode;
@@ -57,18 +68,8 @@ export class Session {
 
     this.output = output;
 
-    if (mode === "tty" || (mode === "auto" && isTtyWriteStream(output))) {
-      // TTY mode requires a WriteStream with cursor methods
-      if (!isTtyWriteStream(output)) {
-        throw new Error(
-          "TTY mode requires a tty.WriteStream with cursorTo, moveCursor, " +
-            "clearLine, and clearScreenDown methods (e.g., process.stderr). " +
-            "Use mode: 'plain' for non-TTY output streams.",
-        );
-      }
-      this.renderer = createTtyRenderer(output, tickInterval);
-    } else {
-      this.renderer = createPlainRenderer(output);
-    }
+    this.renderer = shouldUseTty(mode, output)
+      ? createTtyRenderer(output, tickInterval)
+      : createPlainRenderer(output);
   }
 }

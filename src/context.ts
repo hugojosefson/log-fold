@@ -17,37 +17,16 @@ import {
   type TaskOptions,
 } from "./task-node.ts";
 
-/** Creates a disposable handle that finalizes a task node on dispose. */
-function taskHandle(
-  node: TaskNode,
-  session: Session,
-  options?: { stopRenderer?: boolean },
-): AsyncDisposable {
-  return {
-    [Symbol.asyncDispose]() {
-      if (node.finishedAt === undefined) {
-        node.finishedAt = Date.now();
-      }
-      session.renderer.onTaskEnd(node);
-      if (options?.stopRenderer) {
-        session.renderer.stop();
-      }
-      return Promise.resolve();
-    },
-  };
-}
-
 /** Shared run-and-finalize logic for both top-level and nested tasks. */
 async function runTask<T>(
   node: TaskNode,
   session: Session,
   fn: () => T | Promise<T>,
-  handleOptions?: { stopRenderer?: boolean },
+  options?: { stopRenderer?: boolean },
 ): Promise<T> {
   startTask(node);
   session.renderer.onTaskStart(node);
 
-  await using _handle = taskHandle(node, session, handleOptions);
   try {
     const result = await storage.run(
       { session, node },
@@ -60,6 +39,14 @@ async function runTask<T>(
   } catch (e) {
     failTask(node, e instanceof Error ? e : new Error(String(e)));
     throw e;
+  } finally {
+    if (node.finishedAt === undefined) {
+      node.finishedAt = Date.now();
+    }
+    session.renderer.onTaskEnd(node);
+    if (options?.stopRenderer) {
+      session.renderer.stop();
+    }
   }
 }
 

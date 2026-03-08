@@ -15,5 +15,6 @@ export type {
 } from "./src/log-from-stream.ts";
 
 // Types
-export type { SessionOptions, Spinner, TaskOptions } from "./src/session.ts";
+export type { SessionOptions } from "./src/session.ts";
+export type { Spinner, TaskOptions } from "./src/task-node.ts";
 export type { TaskNode, TaskStatus } from "./src/task-node.ts";

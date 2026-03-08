@@ -81,9 +81,11 @@ function processLineForImport(
           ` from "@hugojosefson/log-fold"`,
         );
       }
+      let jsrPath = step2.startsWith("src/") ? step2.slice(4) : step2;
+      jsrPath = jsrPath.replace(/\.ts$/, "");
       return line.replace(
         /\sfrom\s+"(\..*)"/,
-        ` from "@hugojosefson/log-fold/${step2}"`,
+        ` from "@hugojosefson/log-fold/${jsrPath}"`,
       );
     }
     return line;
