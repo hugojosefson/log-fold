@@ -291,12 +291,3 @@ outside a `logTask()` wrapper unintentionally. Libraries should not set this.
 
 Full API docs on
 [jsr.io/@hugojosefson/log-fold](https://jsr.io/@hugojosefson/log-fold).
-
-For further usage examples, see the tests:
-
-- [test/context.test.ts](test/context.test.ts)
-- [test/log-fold.test.ts](test/log-fold.test.ts)
-- [test/log-from-stream.test.ts](test/log-from-stream.test.ts)
-- [test/renderer.test.ts](test/renderer.test.ts)
-- [test/run-command.test.ts](test/run-command.test.ts)
-- [test/task-node.test.ts](test/task-node.test.ts)
