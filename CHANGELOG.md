@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file. See
 [fork-version](https://github.com/eglavin/fork-version) for commit guidelines.
 
+## 0.0.11 (2026-03-08)
+
+### Other Changes
+
+- **readme:** fix ci badge
+  ([90eb89c](https://github.com/hugojosefson/log-fold/commit/90eb89c8290ee1fc0ceb3ebf31d94953ed404cee))
+
 ## 0.0.10 (2026-03-08)
 
 ### Other Changes
