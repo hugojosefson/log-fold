@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file. See
 [fork-version](https://github.com/eglavin/fork-version) for commit guidelines.
 
+## 0.0.15 (2026-03-08)
+
+### Other Changes
+
+- cleanup
+  ([3e1fd4c](https://github.com/hugojosefson/log-fold/commit/3e1fd4c560d31e9c532a0d105b2661f707fa2366))
+
 ## 0.0.14 (2026-03-08)
 
 ### Other Changes
