@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file. See
 [fork-version](https://github.com/eglavin/fork-version) for commit guidelines.
 
+## 0.0.7 (2026-03-08)
+
+### Other Changes
+
+- remove docker from dependabot
+  ([b585a2e](https://github.com/hugojosefson/log-fold/commit/b585a2e889db2f90270198aa909471a055a633a3)),
+  closes [#5](https://github.com/hugojosefson/log-fold/issues/5)
+
 ## 0.0.6 (2026-03-08)
 
 ### Other Changes
