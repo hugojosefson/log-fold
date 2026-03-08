@@ -1,0 +1,67 @@
+name: ci
+
+on:
+  pull_request:
+    branches:
+      - "*"
+
+jobs:
+  deno-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: denoland/setup-deno@v2
+      - run: deno task test
+  deno-examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: denoland/setup-deno@v2
+      - run: |
+          set -euo pipefail; for i in ./readme/example-*; do
+            echo =============================================
+            echo $i
+            echo =============================================
+            $i
+            echo
+          done
+  node-examples:
+    runs-on: ubuntu-latest
+    env:
+      NODE_USE_SYSTEM_CA: 1
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+      - run: jq -r '.imports | to_entries[] | .value as $v | if $v | startswith("jsr:") then "npx jsr add " + ($v[4:]) elif $v | startswith("npm:") then "npm install " + ($v[4:]) else empty end' deno.jsonc | sh
+      - run: |
+          set -euo pipefail
+          for i in ./readme/example-*; do
+            echo =============================================
+            echo $i
+            echo =============================================
+            node $i
+            echo
+          done
+  bun-examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - run: jq -r '.imports | to_entries[] | .value as $v | if $v | startswith("jsr:") then "npx jsr add " + ($v[4:]) elif $v | startswith("npm:") then "bun install " + ($v[4:]) else empty end' deno.jsonc | sh
+      - run: |
+          set -euo pipefail
+          for i in ./readme/example-*; do
+            echo =============================================
+            echo $i
+            echo =============================================
+            bun run $i
+            echo
+          done
+  deno-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: denoland/setup-deno@v2
+      - run: deno fmt --check
+      - run: deno lint
+      - run: deno check
