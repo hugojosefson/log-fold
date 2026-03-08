@@ -38,14 +38,22 @@ await logTask("Pipeline", async () => {
 
 // stub functions
 function deploy() {
-  return Promise.resolve({ deprecationWarnings: [] });
+  return Promise.resolve({ deprecationWarnings: ["Something is old"] });
 }
 function cacheExists() {
-  return Promise.resolve(false);
+  return Promise.resolve(true);
 }
 function listFiles() {
-  return Promise.resolve(["file1.txt", "file2.txt"]);
+  return Promise.resolve([
+    "file1.txt",
+    "file2.txt",
+    "file3.txt",
+    "file4.txt",
+    "file5.txt",
+  ]);
 }
 async function downloadFile(_file: string) {
-  await Promise.resolve();
+  await new Promise((resolve) => {
+    setTimeout(resolve, 500);
+  });
 }

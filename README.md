@@ -66,7 +66,7 @@ await logTask("All", async () => {
 You may run the above example with:
 
 ```sh
-deno run --reload jsr:@hugojosefson/log-fold/example-usage
+deno run --reload jsr:@hugojosefson/log-fold/example-basic
 ```
 
 ### Concurrent tasks
@@ -91,6 +91,12 @@ await logTask("CI", async () => {
     }),
   ]);
 });
+```
+
+You may run the above example with:
+
+```sh
+deno run --reload jsr:@hugojosefson/log-fold/example-concurrent-tasks
 ```
 
 ### Subprocess wrapper
@@ -122,6 +128,12 @@ Non-zero exit codes throw by default. Control this with `throwOnError`:
 | `"warn"`       | Sets the subtask to warning status |
 | `false`        | Ignores the exit code              |
 
+You may run the above example with:
+
+```sh
+deno run --reload jsr:@hugojosefson/log-fold/example-subprocess-wrapper
+```
+
 ### Custom options
 
 Pass session and per-task options to the top-level `logTask()`:
@@ -139,6 +151,12 @@ await logTask("Deploy", { tailLines: 10, mode: "plain" }, async () => {
 Per-task options (`tailLines`, `spinner`, `map`, `filter`) can be passed at any
 nesting level. Session options (`mode`, `output`, `tickInterval`) are only
 allowed at the top level — passing them to a nested `logTask()` throws.
+
+You may run the above example with:
+
+```sh
+deno run --reload jsr:@hugojosefson/log-fold/example-custom-options
+```
 
 ### Warning, skipped, and dynamic title
 
@@ -182,17 +200,31 @@ await logTask("Pipeline", async () => {
 
 // stub functions
 function deploy() {
-  return Promise.resolve({ deprecationWarnings: [] });
+  return Promise.resolve({ deprecationWarnings: ["Something is old"] });
 }
 function cacheExists() {
-  return Promise.resolve(false);
+  return Promise.resolve(true);
 }
 function listFiles() {
-  return Promise.resolve(["file1.txt", "file2.txt"]);
+  return Promise.resolve([
+    "file1.txt",
+    "file2.txt",
+    "file3.txt",
+    "file4.txt",
+    "file5.txt",
+  ]);
 }
 async function downloadFile(_file: string) {
-  await Promise.resolve();
+  await new Promise((resolve) => {
+    setTimeout(resolve, 500);
+  });
 }
+```
+
+You may run the above example with:
+
+```sh
+deno run --reload jsr:@hugojosefson/log-fold/example-warning-skipped-dynamic-title
 ```
 
 ### Filtering and mapping log lines
@@ -223,6 +255,12 @@ await logTask(
     log("compiling /home/user/src/main.ts"); // shown as "compiling ~/src/main.ts"
   },
 );
+```
+
+You may run the above example with:
+
+```sh
+deno run --reload jsr:@hugojosefson/log-fold/example-filtering-mapping
 ```
 
 ### Stream piping with `logFromStream`
@@ -280,6 +318,12 @@ await logTask("Fetch logs", async () => {
 > unix convention that stdout is structured output and stderr is diagnostic.
 > Passing a single stream (e.g. `child.stdout` directly) returns all its
 > content.
+
+You may run the above example with:
+
+```sh
+deno run --reload jsr:@hugojosefson/log-fold/example-stream-piping
+```
 
 ## Options reference
 
