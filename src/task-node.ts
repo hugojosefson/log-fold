@@ -1,3 +1,5 @@
+import cliSpinners from "cli-spinners";
+
 /**
  * TaskNode — the core data model for a task tree.
  *
@@ -75,10 +77,7 @@ export type TaskNode = {
 
 const DEFAULT_TAIL_LINES = 6;
 
-const DEFAULT_SPINNER: Spinner = {
-  interval: 80,
-  frames: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
-};
+const DEFAULT_SPINNER: Spinner = cliSpinners.dots;
 
 /** Identity flatMap — passes every line through unchanged. */
 const identityFlatMap = (line: string): string[] => [line];
