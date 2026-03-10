@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file. See
 [fork-version](https://github.com/eglavin/fork-version) for commit guidelines.
 
+## 0.0.17 (2026-03-10)
+
+### Other Changes
+
+- **log-from-stream:** verify stderr handling in child processes
+  ([2acc04e](https://github.com/hugojosefson/log-fold/commit/2acc04ebd2d4778b3ceb6aa08ed36f0ca012ae34)),
+  closes [#19](https://github.com/hugojosefson/log-fold/issues/19)
+
 ## 0.0.16 (2026-03-10)
 
 ### Features
