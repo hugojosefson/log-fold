@@ -105,8 +105,7 @@ deno run --reload jsr:@hugojosefson/log-fold/example-concurrent-tasks
 captured stdout. It auto-creates a `logTask` with the command as the title.
 
 ```typescript
-import { logTask } from "@hugojosefson/log-fold";
-import { runCommand } from "@hugojosefson/log-fold/run-command";
+import { logTask, runCommand } from "@hugojosefson/log-fold";
 
 await logTask("Run innocuous npm commands", async () => {
   await runCommand(["npm", "search", "typescript"]);
