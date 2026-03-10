@@ -2,6 +2,8 @@ import { spawn, type SpawnOptions } from "node:child_process";
 import { logTask, setCurrentTaskWarning } from "./context.ts";
 import { logFromStream } from "./log-from-stream.ts";
 
+export type CommandArray = (string | number | boolean)[];
+
 /** Options for runCommand, extending SpawnOptions but forcing stdio. */
 export type RunCommandOptions = Omit<SpawnOptions, "stdio"> & {
   /**
@@ -31,18 +33,18 @@ export type RunCommandResult = {
  * spawn() + logFromStream() directly.
  */
 export async function runCommand(
-  command: string[],
+  command: CommandArray,
   options?: RunCommandOptions,
 ): Promise<RunCommandResult>;
 
 export async function runCommand(
   title: string,
-  command: string[],
+  command: CommandArray,
   options?: RunCommandOptions,
 ): Promise<RunCommandResult>;
 export function runCommand(
-  titleOrCommand: string | string[],
-  commandOrOptions?: string[] | RunCommandOptions,
+  titleOrCommand: string | CommandArray,
+  commandOrOptions?: CommandArray | RunCommandOptions,
   maybeOptions?: RunCommandOptions,
 ): Promise<RunCommandResult> {
   const { title, command, options } = resolveRunCommandArgs(
@@ -53,7 +55,7 @@ export function runCommand(
   const { throwOnError = true, ...spawnOptions } = options ?? {};
 
   return logTask<RunCommandResult>(title, async () => {
-    const child = spawn(command[0], command.slice(1), {
+    const child = spawn(`${command[0]}`, command.slice(1).map((c) => `${c}`), {
       ...spawnOptions,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -87,10 +89,10 @@ export function runCommand(
 }
 
 function resolveRunCommandArgs(
-  titleOrCommand: string | string[],
-  commandOrOptions?: string[] | RunCommandOptions,
+  titleOrCommand: string | CommandArray,
+  commandOrOptions?: CommandArray | RunCommandOptions,
   maybeOptions?: RunCommandOptions,
-): { title: string; command: string[]; options?: RunCommandOptions } {
+): { title: string; command: CommandArray; options?: RunCommandOptions } {
   if (Array.isArray(titleOrCommand)) {
     // runCommand(command, options?)
     const command = titleOrCommand;
@@ -104,7 +106,7 @@ function resolveRunCommandArgs(
   // runCommand(title, command, options?)
   return {
     title: titleOrCommand,
-    command: commandOrOptions as string[],
+    command: commandOrOptions as CommandArray,
     options: maybeOptions,
   };
 }

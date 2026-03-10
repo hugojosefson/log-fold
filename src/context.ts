@@ -18,10 +18,10 @@ import {
 } from "./task-node.ts";
 
 /** Shared run-and-finalize logic for both top-level and nested tasks. */
-async function runTask<T>(
+async function runTask<T, A extends unknown[] = unknown[]>(
   node: TaskNode,
   session: Session,
-  fn: () => T | Promise<T>,
+  fn: (...args: A) => T | Promise<T>,
   options?: { stopRenderer?: boolean },
 ): Promise<T> {
   startTask(node);
@@ -30,7 +30,7 @@ async function runTask<T>(
   try {
     const result = await storage.run(
       { session, node },
-      () => Promise.resolve(fn()),
+      (...args: A) => Promise.resolve(fn(...args)),
     );
     if (node.status === "running") {
       succeedTask(node);
@@ -55,43 +55,43 @@ async function runTask<T>(
  * If called at the top level (no active context), auto-initializes a session
  * with default options.
  */
-export function logTask<T>(
-  fn: () => T | Promise<T>,
+export function logTask<T, A extends unknown[] = unknown[]>(
+  fn: (...args: A) => T | Promise<T>,
 ): Promise<T>;
-export function logTask<T>(
+export function logTask<T, A extends unknown[] = unknown[]>(
   options: TaskOptions,
-  fn: () => T | Promise<T>,
+  fn: (...args: A) => T | Promise<T>,
 ): Promise<T>;
-export function logTask<T>(
+export function logTask<T, A extends unknown[] = unknown[]>(
   options: SessionOptions & TaskOptions,
-  fn: () => T | Promise<T>,
+  fn: (...args: A) => T | Promise<T>,
 ): Promise<T>;
-export function logTask<T>(
+export function logTask<T, A extends unknown[] = unknown[]>(
   title: string | undefined,
-  fn: () => T | Promise<T>,
+  fn: (...args: A) => T | Promise<T>,
 ): Promise<T>;
-export function logTask<T>(
+export function logTask<T, A extends unknown[] = unknown[]>(
   title: string | undefined,
   options: TaskOptions,
-  fn: () => T | Promise<T>,
+  fn: (...args: A) => T | Promise<T>,
 ): Promise<T>;
-export function logTask<T>(
+export function logTask<T, A extends unknown[] = unknown[]>(
   title: string | undefined,
   options: SessionOptions & TaskOptions,
-  fn: () => T | Promise<T>,
+  fn: (...args: A) => T | Promise<T>,
 ): Promise<T>;
 
-export function logTask<T>(
+export function logTask<T, A extends unknown[] = unknown[]>(
   titleOrFnOrOptions:
     | string
     | undefined
-    | (() => T | Promise<T>)
+    | ((...args: A) => T | Promise<T>)
     | (SessionOptions & TaskOptions),
   fnOrOptions?:
-    | (() => T | Promise<T>)
+    | ((...args: A) => T | Promise<T>)
     | TaskOptions
     | (SessionOptions & TaskOptions),
-  maybeFn?: () => T | Promise<T>,
+  maybeFn?: (...args: A) => T | Promise<T>,
 ): Promise<T> {
   const { title, options, fn } = resolveLogTaskArgs(
     titleOrFnOrOptions,
