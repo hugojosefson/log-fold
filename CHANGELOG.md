@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file. See
 [fork-version](https://github.com/eglavin/fork-version) for commit guidelines.
 
+## 0.0.16 (2026-03-10)
+
+### Features
+
+- **log-task:** pass on args, allow string|number|boolean
+  ([6162ec7](https://github.com/hugojosefson/log-fold/commit/6162ec767ba40b61b701bcf4a5cf6aaef221cd31))
+
 ## 0.0.15 (2026-03-08)
 
 ### Other Changes
