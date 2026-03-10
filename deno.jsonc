@@ -5,7 +5,6 @@
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
-    "./run-command": "./src/run-command.ts",
     "./example-basic": "./readme/example-basic.ts",
     "./example-concurrent-folds": "./readme/example-concurrent-folds.ts",
     "./example-custom-options": "./readme/example-custom-options.ts",
