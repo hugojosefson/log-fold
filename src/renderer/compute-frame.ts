@@ -1,19 +1,19 @@
 import { cyan, dim, red, yellow } from "@std/fmt/colors";
 import stringWidth from "string-width";
-import { formatDuration, formatTasksProgress } from "../format.ts";
+import { formatDuration, formatFoldsProgress } from "../format.ts";
 import {
-  countTasks,
+  countFolds,
   durationMillis,
   findRunningLeaves,
+  type FoldNode,
   logBytes,
-  type TaskNode,
-} from "../task-node.ts";
+} from "../fold-node.ts";
 
 /** Options for computeFrame(). */
 export type FrameOptions = {
   termWidth: number;
   termHeight: number;
-  displayCounts: WeakMap<TaskNode, number>;
+  displayCounts: WeakMap<FoldNode, number>;
   now: number;
 };
 
@@ -44,22 +44,22 @@ function truncateLine(line: string, maxWidth: number): string {
 }
 
 type TailAssignment = {
-  node: TaskNode;
+  node: FoldNode;
   lines: number;
 };
 
 type RankedLeaf = {
-  node: TaskNode;
+  node: FoldNode;
   score: number;
 };
 
 function calculateTailAssignments(
   termHeight: number,
-  taskLines: string[],
+  foldLines: string[],
   rankedRunningLeaves: RankedLeaf[],
 ): TailAssignment[] {
   // Calculate available viewport lines
-  let free = termHeight - taskLines.length - 2;
+  let free = termHeight - foldLines.length - 2;
   if (free < 0) {
     free = 0;
   }
@@ -95,22 +95,22 @@ function calculateTailAssignments(
 
 /**
  * Computes a frame for the TTY renderer.
- * Reads per-task tailLines, spinner, composedFlatMap directly from each TaskNode.
+ * Reads per-fold tailLines, spinner, composedFlatMap directly from each FoldNode.
  * Mutates displayCounts in place.
  */
-export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
+export function computeFrame(root: FoldNode, options: FrameOptions): Frame {
   const { termWidth, termHeight, displayCounts, now } = options;
 
   // Step 1: Task lines (recursive walk)
-  const taskLines: string[] = [];
+  const foldLines: string[] = [];
 
-  // Track which running leaves have task lines, and their indent for tail rendering
-  const runningLeafIndents = new Map<TaskNode, string>();
+  // Track which running leaves have fold lines, and their indent for tail rendering
+  const runningLeafIndents = new Map<FoldNode, string>();
 
-  function renderNode(node: TaskNode, displayDepth: number): void {
+  function renderNode(node: FoldNode, displayDepth: number): void {
     const indent = "  ".repeat(displayDepth);
 
-    // Title-less tasks: skip node's own line, recurse children at same displayDepth
+    // Title-less folds: skip node's own line, recurse children at same displayDepth
     if (node.title === undefined) {
       for (const child of node.children) {
         renderNode(child, displayDepth);
@@ -128,7 +128,7 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
         return;
 
       case "success":
-        taskLines.push(
+        foldLines.push(
           truncateLine(
             `${indent}${dim(cyan(`✓ ${title}  ${duration}`))}`,
             termWidth,
@@ -137,7 +137,7 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
         return;
 
       case "warning":
-        taskLines.push(
+        foldLines.push(
           truncateLine(
             `${indent}${yellow(`⚠ ${title}  ${duration}`)}`,
             termWidth,
@@ -146,7 +146,7 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
         return;
 
       case "fail":
-        taskLines.push(
+        foldLines.push(
           truncateLine(
             `${indent}${red(`✗ ${title}  ERROR  ${duration}`)}`,
             termWidth,
@@ -155,7 +155,7 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
         return;
 
       case "skipped":
-        taskLines.push(
+        foldLines.push(
           truncateLine(`${indent}${dim(`⊘ ${title}`)}`, termWidth),
         );
         return;
@@ -167,12 +167,12 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
           spinner.frames.length;
         const frame = spinner.frames[frameIndex];
 
-        // Root running task shows (C/N) progress
+        // Root running fold shows (C/N) progress
         const progress = node.parent
           ? ""
-          : ` (${formatTasksProgress(countTasks(root))})`;
+          : ` (${formatFoldsProgress(countFolds(root))})`;
 
-        taskLines.push(
+        foldLines.push(
           truncateLine(
             `${indent}${frame} ${title}  ${duration}${progress}`,
             termWidth,
@@ -212,7 +212,7 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
 
   const tailAssignments = calculateTailAssignments(
     termHeight,
-    taskLines,
+    foldLines,
     rankedRunningLeaves,
   );
 
@@ -222,14 +222,14 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
     displayCounts.set(node, prev + 1);
   }
 
-  // Build tail line sections and insert after corresponding task lines
-  // We need to find where each running leaf's task line is and insert tail after it
+  // Build tail line sections and insert after corresponding fold lines
+  // We need to find where each running leaf's fold line is and insert tail after it
   const allLines: string[] = [];
 
-  // Rebuild: walk the tree again to interleave task lines and tail lines
-  let taskLineIndex = 0;
+  // Rebuild: walk the tree again to interleave fold lines and tail lines
+  let foldLineIndex = 0;
 
-  function emitNode(node: TaskNode, displayDepth: number): void {
+  function emitNode(node: FoldNode, displayDepth: number): void {
     const indent = "  ".repeat(displayDepth);
 
     if (node.title === undefined) {
@@ -243,10 +243,10 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
       return;
     }
 
-    // Emit the task line
-    if (taskLineIndex < taskLines.length) {
-      allLines.push(taskLines[taskLineIndex]);
-      taskLineIndex++;
+    // Emit the fold line
+    if (foldLineIndex < foldLines.length) {
+      allLines.push(foldLines[foldLineIndex]);
+      foldLineIndex++;
     }
 
     if (node.status === "running") {
@@ -279,10 +279,10 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
   // Step 3: Viewport fitting
   if (allLines.length > termHeight) {
     // First: already handled by reducing tails above
-    // Second: drop completed tasks from oldest first
-    // Third: never drop running tasks
+    // Second: drop completed folds from oldest first
+    // Third: never drop running folds
 
-    // Simple approach: keep lines up to termHeight, preserving running tasks
+    // Simple approach: keep lines up to termHeight, preserving running folds
     const trimmed = fitViewport(allLines, termHeight);
     return { lines: trimmed };
   }
@@ -290,12 +290,12 @@ export function computeFrame(root: TaskNode, options: FrameOptions): Frame {
   return { lines: allLines };
 }
 
-/** Fit lines to viewport height by dropping completed tasks. */
+/** Fit lines to viewport height by dropping completed folds. */
 function fitViewport(
   lines: string[],
   maxHeight: number,
 ): string[] {
-  // Simple truncation: take the last maxHeight lines to keep recent/running tasks visible
+  // Simple truncation: take the last maxHeight lines to keep recent/running folds visible
   if (lines.length <= maxHeight) {
     return lines;
   }

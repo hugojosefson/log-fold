@@ -4,11 +4,11 @@ import { createPlainRenderer } from "./renderer/plain-renderer.ts";
 import type { Renderer } from "./renderer/renderer.ts";
 import { createTtyRenderer } from "./renderer/tty-renderer.ts";
 import type { WriteStreamLike } from "./renderer/write-stream-like.ts";
-import type { TaskNode } from "./task-node.ts";
+import type { FoldNode } from "./fold-node.ts";
 
 export type Mode = "tty" | "plain" | "auto";
 
-/** Session configuration options. Only apply at the top-level logTask() call. */
+/** Session configuration options. Only apply at the top-level logFold() call. */
 export type SessionOptions = {
   /** Attempt to force TTY or plain mode. Default: "auto" (detect via isTTY). */
   mode?: Mode;
@@ -55,9 +55,9 @@ function shouldUseTty(
   return false;
 }
 
-/** Internal Session class — owns the task tree and renderer. */
+/** Internal Session class — owns the fold tree and renderer. */
 export class Session {
-  root!: TaskNode;
+  root!: FoldNode;
   readonly renderer: Renderer;
   readonly output: WriteStream | WriteStreamLike;
 

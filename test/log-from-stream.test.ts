@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
 import { Readable } from "node:stream";
-import { logFromStream, logTask } from "../mod.ts";
+import { logFold, logFromStream } from "../mod.ts";
 import type { WriteStreamLike } from "../src/renderer/write-stream-like.ts";
 
 /** Create a mock writable stream that collects output. */
@@ -47,7 +47,7 @@ Deno.test("logFromStream", async (t) => {
     "Node.js Readable lines split correctly, all collected",
     async () => {
       const output = mockStream();
-      const result = await logTask(
+      const result = await logFold(
         "test",
         { mode: "plain" as const, output },
         async () => {
@@ -68,7 +68,7 @@ Deno.test("logFromStream", async (t) => {
     "Web ReadableStream<Uint8Array> converted and split correctly",
     async () => {
       const output = mockStream();
-      const result = await logTask(
+      const result = await logFold(
         "test",
         { mode: "plain" as const, output },
         async () => {
@@ -85,7 +85,7 @@ Deno.test("logFromStream", async (t) => {
     "StreamPair: both piped to log(), only stdout in return value",
     async () => {
       const output = mockStream();
-      const result = await logTask(
+      const result = await logFold(
         "test",
         { mode: "plain" as const, output },
         async () => {
@@ -110,7 +110,7 @@ Deno.test("logFromStream", async (t) => {
     "StreamPair with only stderr returns empty string, stderr still piped",
     async () => {
       const output = mockStream();
-      const result = await logTask(
+      const result = await logFold(
         "test",
         { mode: "plain" as const, output },
         async () => {
@@ -134,7 +134,7 @@ Deno.test("logFromStream", async (t) => {
     "AsyncIterable<string>: each yielded string passed to log(), multi-line yields split correctly",
     async () => {
       const output = mockStream();
-      const result = await logTask(
+      const result = await logFold(
         "test",
         { mode: "plain" as const, output },
         async () => {
@@ -153,7 +153,7 @@ Deno.test("logFromStream", async (t) => {
     "Array of streams processed concurrently, all lines collected",
     async () => {
       const output = mockStream();
-      const result = await logTask(
+      const result = await logFold(
         "test",
         { mode: "plain" as const, output },
         async () => {
@@ -177,7 +177,7 @@ Deno.test("logFromStream", async (t) => {
     async () => {
       const output = mockStream();
       // Node.js Readable has Symbol.asyncIterator, but should be detected as Readable (pipe-based)
-      const result = await logTask(
+      const result = await logFold(
         "test",
         { mode: "plain" as const, output },
         async () => {
@@ -196,7 +196,7 @@ Deno.test("logFromStream", async (t) => {
     "concurrent streams on StreamPair: lines arrive without corruption",
     async () => {
       const output = mockStream();
-      const result = await logTask(
+      const result = await logFold(
         "test",
         { mode: "plain" as const, output },
         async () => {
@@ -221,7 +221,7 @@ Deno.test("logFromStream", async (t) => {
 
   await t.step("empty stream returns empty string", async () => {
     const output = mockStream();
-    const result = await logTask(
+    const result = await logFold(
       "test",
       { mode: "plain" as const, output },
       async () => {
@@ -235,9 +235,9 @@ Deno.test("logFromStream", async (t) => {
 });
 
 Deno.test(
-  "logFromStream outside task context: falls back to process.stderr via log()",
+  "logFromStream outside fold context: falls back to process.stderr via log()",
   async () => {
-    // logFromStream outside a task context should still work
+    // logFromStream outside a fold context should still work
     // (log() falls back to process.stderr)
     // It still collects and returns lines
     const readable = readableFromLines(["fallback-line"]);

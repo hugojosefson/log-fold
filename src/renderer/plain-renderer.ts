@@ -1,10 +1,10 @@
 import { formatDuration } from "../format.ts";
 import {
   ancestorChain,
-  countTasks,
+  countFolds,
   durationMillis,
-  type TaskNode,
-} from "../task-node.ts";
+  type FoldNode,
+} from "../fold-node.ts";
 import { dumpNodeLogs } from "./dump-node-logs.ts";
 import type { Renderer } from "./renderer.ts";
 import type { WriteStreamLike } from "./write-stream-like.ts";
@@ -14,24 +14,24 @@ export function createPlainRenderer(
   output: WriteStreamLike,
 ): Renderer {
   let stopped = false;
-  let root: TaskNode | undefined;
+  let root: FoldNode | undefined;
 
   /** Build the ancestor path prefix for a node, e.g. `[Root (C/N) > Child]`. */
-  function prefix(node: TaskNode): string {
+  function prefix(node: FoldNode): string {
     const chain = ancestorChain(node);
     const parts: string[] = [];
 
     for (let i = 0; i < chain.length; i++) {
       const n = chain[i];
-      // Title-less tasks omitted from ancestor path
+      // Title-less folds omitted from ancestor path
       if (n.title === undefined) {
         continue;
       }
 
       let part = n.title;
-      // Root task includes (C/N) progress count
+      // Root fold includes (C/N) progress count
       if (n.parent === undefined && root) {
-        const { completed, total } = countTasks(root);
+        const { completed, total } = countFolds(root);
         part = `${part} (${completed}/${total})`;
       }
       parts.push(part);
@@ -41,22 +41,22 @@ export function createPlainRenderer(
   }
 
   return {
-    onTaskStart(node: TaskNode): void {
+    onFoldStart(node: FoldNode): void {
       if (stopped) {
         return;
       }
-      // Only show start for titled tasks
+      // Only show start for titled folds
       if (node.title === undefined) {
         return;
       }
       output.write(`${prefix(node)} => started\n`);
     },
 
-    onTaskEnd(node: TaskNode): void {
+    onFoldEnd(node: FoldNode): void {
       if (stopped) {
         return;
       }
-      // Only show end for titled tasks
+      // Only show end for titled folds
       if (node.title === undefined) {
         return;
       }
@@ -86,7 +86,7 @@ export function createPlainRenderer(
       }
     },
 
-    onLog(node: TaskNode, line: string): void {
+    onLog(node: FoldNode, line: string): void {
       if (stopped) {
         return;
       }
@@ -101,7 +101,7 @@ export function createPlainRenderer(
       }
     },
 
-    start(rootNode: TaskNode): void {
+    start(rootNode: FoldNode): void {
       if (stopped) {
         return;
       }
@@ -118,8 +118,8 @@ export function createPlainRenderer(
 }
 
 /** Find the nearest titled ancestor (including self). */
-function findTitledAncestor(node: TaskNode): TaskNode | undefined {
-  let current: TaskNode | undefined = node;
+function findTitledAncestor(node: FoldNode): FoldNode | undefined {
+  let current: FoldNode | undefined = node;
   while (current) {
     if (current.title !== undefined) {
       return current;
@@ -129,9 +129,9 @@ function findTitledAncestor(node: TaskNode): TaskNode | undefined {
   return undefined;
 }
 
-/** Dump full log for a failed task. */
+/** Dump full log for a failed fold. */
 function dumpFailLog(
-  node: TaskNode,
+  node: FoldNode,
   output: WriteStreamLike,
 ): void {
   // Only dump for leaf failures (no failed children)

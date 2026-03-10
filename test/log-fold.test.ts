@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import { log, logTask } from "../mod.ts";
+import { log, logFold } from "../mod.ts";
 import type { WriteStreamLike } from "../src/renderer/write-stream-like.ts";
 
 /** Create a mock writable stream that collects output. */
@@ -18,19 +18,19 @@ Deno.test({
   name: "log-fold integration",
   sanitizeOps: false,
   fn: async (t) => {
-    await t.step("sequential tasks run and complete", async () => {
+    await t.step("sequential folds run and complete", async () => {
       const output = createMockOutput();
-      await logTask("Root", { mode: "plain" as const, output }, async () => {
-        await logTask("Step 1", () => {
+      await logFold("Root", { mode: "plain" as const, output }, async () => {
+        await logFold("Step 1", () => {
           log("doing step 1");
         });
-        await logTask("Step 2", () => {
+        await logFold("Step 2", () => {
           log("doing step 2");
         });
       });
 
       const allOutput = output.lines.join("");
-      // Both tasks started and completed
+      // Both folds started and completed
       assertEquals(
         allOutput.includes("Step 1") && allOutput.includes("✓"),
         true,
@@ -40,37 +40,37 @@ Deno.test({
       assertEquals(allOutput.includes("doing step 2"), true);
     });
 
-    await t.step("concurrent tasks via Promise.all", async () => {
+    await t.step("concurrent folds via Promise.all", async () => {
       const output = createMockOutput();
-      await logTask("Root", { mode: "plain" as const, output }, async () => {
+      await logFold("Root", { mode: "plain" as const, output }, async () => {
         await Promise.all([
-          logTask("Task A", () => {
+          logFold("Fold A", () => {
             log("running A");
           }),
-          logTask("Task B", () => {
+          logFold("Fold B", () => {
             log("running B");
           }),
         ]);
       });
 
       const allOutput = output.lines.join("");
-      assertEquals(allOutput.includes("Task A"), true);
-      assertEquals(allOutput.includes("Task B"), true);
+      assertEquals(allOutput.includes("Fold A"), true);
+      assertEquals(allOutput.includes("Fold B"), true);
       assertEquals(allOutput.includes("running A"), true);
       assertEquals(allOutput.includes("running B"), true);
     });
 
     await t.step(
-      "error: task fails, error captured, full log available",
+      "error: fold fails, error captured, full log available",
       async () => {
         const output = createMockOutput();
         await assertRejects(
           async () => {
-            await logTask(
+            await logFold(
               "Root",
               { mode: "plain" as const, output },
               async () => {
-                await logTask("Failing", () => {
+                await logFold("Failing", () => {
                   log("before error");
                   log("more output");
                   throw new Error("test failure");
@@ -83,7 +83,7 @@ Deno.test({
         );
 
         const allOutput = output.lines.join("");
-        // Failed task marked with ✗
+        // Failed fold marked with ✗
         assertEquals(allOutput.includes("✗"), true);
         assertEquals(allOutput.includes("ERROR"), true);
         // Error dump includes the log lines (after composedFlatMap)
@@ -95,12 +95,12 @@ Deno.test({
       const output = createMockOutput();
       await assertRejects(
         async () => {
-          await logTask(
+          await logFold(
             "Root",
             { mode: "plain" as const, output },
             async () => {
-              await logTask("Parent", async () => {
-                await logTask("Child", () => {
+              await logFold("Parent", async () => {
+                await logFold("Child", () => {
                   throw new Error("deep error");
                 });
               });
@@ -122,7 +122,7 @@ Deno.test({
         const output = createMockOutput();
         await assertRejects(
           async () => {
-            await logTask(
+            await logFold(
               "Root",
               {
                 mode: "plain" as const,
@@ -156,7 +156,7 @@ Deno.test({
         const output = createMockOutput();
         await assertRejects(
           async () => {
-            await logTask(
+            await logFold(
               "Root",
               {
                 mode: "plain" as const,
@@ -192,16 +192,16 @@ Deno.test({
         let timerId: ReturnType<typeof setTimeout> | undefined;
         await assertRejects(
           async () => {
-            await logTask(
+            await logFold(
               "Root",
               { mode: "plain" as const, output },
               async () => {
                 await Promise.all([
-                  logTask("Fast fail", () => {
+                  logFold("Fast fail", () => {
                     throw new Error("fast error");
                   }),
-                  logTask("Slow sibling", async () => {
-                    // This task starts but never gets to complete because
+                  logFold("Slow sibling", async () => {
+                    // This fold starts but never gets to complete because
                     // Promise.all rejects on first failure
                     await new Promise((resolve) => {
                       timerId = setTimeout(resolve, 100);
@@ -221,7 +221,7 @@ Deno.test({
         }
 
         // The test passes if the error propagates correctly
-        // Orphaned sibling tasks remain in running status (per design)
+        // Orphaned sibling folds remain in running status (per design)
         const allOutput = output.lines.join("");
         assertEquals(allOutput.includes("Fast fail"), true);
       },
@@ -231,16 +231,16 @@ Deno.test({
       "Promise.allSettled: all branches complete before parent handles errors",
       async () => {
         const output = createMockOutput();
-        const results = await logTask(
+        const results = await logFold(
           "Root",
           { mode: "plain" as const, output },
           async () => {
             return await Promise.allSettled([
-              logTask("Succeeder", () => {
+              logFold("Succeeder", () => {
                 log("success output");
                 return "ok";
               }),
-              logTask("Failer", () => {
+              logFold("Failer", () => {
                 log("fail output");
                 throw new Error("planned failure");
               }),
@@ -248,13 +248,13 @@ Deno.test({
           },
         );
 
-        // Both tasks completed
+        // Both folds completed
         assertEquals(results.length, 2);
         assertEquals(results[0].status, "fulfilled");
         assertEquals(results[1].status, "rejected");
 
         const allOutput = output.lines.join("");
-        // Both tasks' output visible
+        // Both folds' output visible
         assertEquals(allOutput.includes("success output"), true);
         assertEquals(allOutput.includes("fail output"), true);
       },

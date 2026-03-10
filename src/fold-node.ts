@@ -1,10 +1,10 @@
 import cliSpinners from "cli-spinners";
 
 /**
- * TaskNode — the core data model for a task tree.
+ * FoldNode — the core data model for a fold tree.
  *
- * Each node represents one task that can have children (sub-tasks).
- * Running leaf tasks accumulate log lines from their process output.
+ * Each node represents one fold that can have children (nested folds).
+ * Running leaf folds accumulate log lines from their process output.
  */
 
 /** Spinner definition compatible with `cli-spinners` by sindresorhus. */
@@ -15,11 +15,11 @@ export type Spinner = {
   frames: string[];
 };
 
-/** Options for configuring a task's display behavior. */
-export type TaskOptions = {
-  /** Number of log tail lines to show. Child tasks inherit from the nearest ancestor that sets this. */
+/** Options for configuring a fold's display behavior. */
+export type FoldOptions = {
+  /** Number of log tail lines to show. Child folds inherit from the nearest ancestor that sets this. */
   tailLines?: number;
-  /** Spinner for this running task. Child tasks inherit from the nearest ancestor that sets this. */
+  /** Spinner for this running fold. Child folds inherit from the nearest ancestor that sets this. */
   spinner?: Spinner;
   /** Transform each log line before display and in error dumps. */
   map?: (line: string) => string;
@@ -27,15 +27,15 @@ export type TaskOptions = {
   filter?: (line: string) => boolean;
 };
 
-export const TASK_OPTIONS_KEYS: (keyof TaskOptions)[] = [
+export const FOLD_OPTIONS_KEYS: (keyof FoldOptions)[] = [
   "tailLines",
   "spinner",
   "map",
   "filter",
 ];
 
-/** Status of a task through its lifecycle. */
-export type TaskStatus =
+/** Status of a fold through its lifecycle. */
+export type FoldStatus =
   | "pending"
   | "running"
   | "success"
@@ -43,13 +43,13 @@ export type TaskStatus =
   | "fail"
   | "skipped";
 
-/** A node in the task tree. */
-export type TaskNode = {
+/** A node in the fold tree. */
+export type FoldNode = {
   /** Display title — undefined means structural-only (not rendered, children appear at parent's depth). */
   title: string | undefined;
-  status: TaskStatus;
-  readonly parent: TaskNode | undefined;
-  readonly children: TaskNode[];
+  status: FoldStatus;
+  readonly parent: FoldNode | undefined;
+  readonly children: FoldNode[];
 
   /** Full log buffer — kept so we can dump it on error. */
   readonly logLines: string[];
@@ -70,7 +70,7 @@ export type TaskNode = {
   /**
    * Composed map/filter chain for display.
    * Local map → local filter → parent's composedFlatMap.
-   * Identity `(line) => [line]` when no map/filter on this task or any ancestor.
+   * Identity `(line) => [line]` when no map/filter on this fold or any ancestor.
    */
   readonly composedFlatMap: (line: string) => string[];
 };
@@ -82,12 +82,12 @@ const DEFAULT_SPINNER: Spinner = cliSpinners.dots;
 /** Identity flatMap — passes every line through unchanged. */
 const identityFlatMap = (line: string): string[] => [line];
 
-/** Create a new task node, appending to parent's children if given. */
-export function createTaskNode(
+/** Create a new fold node, appending to parent's children if given. */
+export function createFoldNode(
   title?: string,
-  parent?: TaskNode,
-  options?: TaskOptions,
-): TaskNode {
+  parent?: FoldNode,
+  options?: FoldOptions,
+): FoldNode {
   // Resolve tailLines: explicit option > nearest ancestor > default
   const tailLines = options?.tailLines ??
     parent?.tailLines ??
@@ -127,7 +127,7 @@ export function createTaskNode(
     composedFlatMap = parentFlatMap;
   }
 
-  const node: TaskNode = {
+  const node: FoldNode = {
     title,
     status: "pending",
     parent,
@@ -147,45 +147,45 @@ export function createTaskNode(
   return node;
 }
 
-/** Mark a task as running. */
-export function startTask(node: TaskNode): void {
+/** Set this fold's status to running. */
+export function startFold(node: FoldNode): void {
   node.status = "running";
   node.startedAt = Date.now();
 }
 
-/** Mark a task as successfully completed. */
-export function succeedTask(node: TaskNode): void {
+/** Set this fold's status to succeeded. */
+export function succeedFold(node: FoldNode): void {
   node.status = "success";
   node.finishedAt = Date.now();
 }
 
-/** Mark a task as failed. */
-export function failTask(node: TaskNode, error?: Error): void {
+/** Set this fold's status to failed. */
+export function failFold(node: FoldNode, error?: Error): void {
   node.status = "fail";
   node.error = error;
   node.finishedAt = Date.now();
 }
 
 /** Update the node's display title in-place. */
-export function setTitle(node: TaskNode, title: string): void {
+export function setTitle(node: FoldNode, title: string): void {
   node.title = title;
 }
 
-/** Push a single line to the task's log buffer. */
-export function appendLog(node: TaskNode, line: string): void {
+/** Push a single line to the fold's log buffer. */
+export function appendLog(node: FoldNode, line: string): void {
   node.logLines.push(line);
 }
 
 /** Get the last `n` log lines (the "tail window"). */
-export function tailLogLines(node: TaskNode, n: number): string[] {
+export function tailLogLines(node: FoldNode, n: number): string[] {
   return node.logLines.slice(-n);
 }
 
 /**
  * Duration in milliseconds.
- * Returns elapsed ms for running/completed tasks, undefined for pending.
+ * Returns elapsed ms for running/completed folds, undefined for pending.
  */
-export function durationMillis(node: TaskNode): number | undefined {
+export function durationMillis(node: FoldNode): number | undefined {
   if (node.startedAt === undefined) {
     return undefined;
   }
@@ -195,9 +195,9 @@ export function durationMillis(node: TaskNode): number | undefined {
 
 /** Walk the tree depth-first, yielding each node and its depth. */
 export function* walkTree(
-  root: TaskNode,
+  root: FoldNode,
   depth = 0,
-): Generator<{ node: TaskNode; depth: number }> {
+): Generator<{ node: FoldNode; depth: number }> {
   yield { node: root, depth };
   for (const child of root.children) {
     yield* walkTree(child, depth + 1);
@@ -205,8 +205,8 @@ export function* walkTree(
 }
 
 /** Find all currently-running leaf nodes (no running children). */
-export function findRunningLeaves(root: TaskNode): TaskNode[] {
-  const leaves: TaskNode[] = [];
+export function findRunningLeaves(root: FoldNode): FoldNode[] {
+  const leaves: FoldNode[] = [];
   for (const { node } of walkTree(root)) {
     if (node.status !== "running") {
       continue;
@@ -219,16 +219,16 @@ export function findRunningLeaves(root: TaskNode): TaskNode[] {
   return leaves;
 }
 
-export type TasksProgress = { total: number; completed: number };
+export type FoldsProgress = { total: number; completed: number };
 
 /**
- * Count total tasks and completed tasks in the tree.
- * Title-less (structural-only) tasks are excluded from counts.
+ * Count total folds and completed folds in the tree.
+ * Title-less (structural-only) folds are excluded from counts.
  * "Completed" = any terminal status: success, warning, fail, or skipped.
  */
-export function countTasks(
-  root: TaskNode,
-): TasksProgress {
+export function countFolds(
+  root: FoldNode,
+): FoldsProgress {
   let total = 0;
   let completed = 0;
   for (const { node } of walkTree(root)) {
@@ -247,16 +247,16 @@ export function countTasks(
 }
 
 /** Total bytes of log output for a node. */
-export function logBytes(node: TaskNode): number {
+export function logBytes(node: FoldNode): number {
   return node.logLines
     .map((line) => line.length)
     .reduce((a: number, b: number) => a + b, 0);
 }
 
 /** Get the chain of ancestors from root down to the given node (inclusive). */
-export function ancestorChain(node: TaskNode): TaskNode[] {
-  const chain: TaskNode[] = [];
-  let current: TaskNode | undefined = node;
+export function ancestorChain(node: FoldNode): FoldNode[] {
+  const chain: FoldNode[] = [];
+  let current: FoldNode | undefined = node;
   while (current) {
     chain.unshift(current);
     current = current.parent;

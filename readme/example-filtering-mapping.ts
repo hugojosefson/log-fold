@@ -1,8 +1,8 @@
 #!/usr/bin/env -S deno run
-import { log, logTask } from "../mod.ts";
+import { log, logFold } from "../mod.ts";
 
 // Redact secrets — filtered lines are hidden from display AND error dumps
-await logTask(
+await logFold(
   "Deploy",
   { filter: (line) => !line.includes("SECRET") },
   () => {
@@ -13,7 +13,7 @@ await logTask(
 );
 
 // Rewrite paths — applies to display and error dumps
-await logTask(
+await logFold(
   "Build",
   { map: (line) => line.replace(/\/home\/user/g, "~") },
   () => {

@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { spawn } from "node:child_process";
-import { logFromStream, logTask } from "../mod.ts";
+import { logFold, logFromStream } from "../mod.ts";
 import type { WriteStreamLike } from "../src/renderer/write-stream-like.ts";
 import { runCommand } from "../src/run-command.ts";
 
@@ -19,7 +19,7 @@ function mockStream(): WriteStreamLike & { lines: string[] } {
 Deno.test("runCommand", async (t) => {
   await t.step("echo hello: log contains 'hello'", async () => {
     const output = mockStream();
-    const result = await logTask(
+    const result = await logFold(
       "Root",
       { mode: "plain" as const, output },
       async () => {
@@ -34,11 +34,11 @@ Deno.test("runCommand", async (t) => {
     assertEquals(allOutput.includes("hello"), true);
   });
 
-  await t.step("failing command: task fails", async () => {
+  await t.step("failing command: fold fails", async () => {
     const output = mockStream();
     await assertRejects(
       async () => {
-        await logTask(
+        await logFold(
           "Root",
           { mode: "plain" as const, output },
           async () => {
@@ -53,7 +53,7 @@ Deno.test("runCommand", async (t) => {
 
   await t.step("stdout and stderr both captured", async () => {
     const output = mockStream();
-    const result = await logTask(
+    const result = await logFold(
       "Root",
       { mode: "plain" as const, output },
       async () => {
@@ -75,9 +75,9 @@ Deno.test("runCommand", async (t) => {
     assertEquals(allOutput.includes("stderr-text"), true);
   });
 
-  await t.step("auto-nests under current task", async () => {
+  await t.step("auto-nests under current fold", async () => {
     const output = mockStream();
-    await logTask(
+    await logFold(
       "Parent",
       { mode: "plain" as const, output },
       async () => {
@@ -86,7 +86,7 @@ Deno.test("runCommand", async (t) => {
     );
 
     const allOutput = output.lines.join("");
-    // The runCommand creates a sub-task with the command as title
+    // The runCommand creates a nested fold with the command as title
     // It should appear nested under Parent in the plain renderer output
     assertEquals(allOutput.includes("Parent"), true);
     assertEquals(allOutput.includes("echo nested"), true);
@@ -97,7 +97,7 @@ Deno.test("runCommand", async (t) => {
     "logFromStream(childProcess) returns only stdout, not stderr",
     async () => {
       const output = mockStream();
-      const result = await logTask(
+      const result = await logFold(
         "Root",
         { mode: "plain" as const, output },
         async () => {
@@ -124,7 +124,7 @@ Deno.test("runCommand", async (t) => {
     const output = mockStream();
     await assertRejects(
       async () => {
-        await logTask(
+        await logFold(
           "Root",
           { mode: "plain" as const, output },
           async () => {

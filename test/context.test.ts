@@ -1,20 +1,20 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import {
   log,
-  logTask,
-  setCurrentTaskSkipped,
-  setCurrentTaskTitle,
-  setCurrentTaskWarning,
+  logFold,
+  setCurrentFoldSkipped,
+  setCurrentFoldTitle,
+  setCurrentFoldWarning,
 } from "../src/context.ts";
 import { storage } from "../src/storage.ts";
 import { createMockOutput } from "./create-mock-output.ts";
 
 Deno.test("context", async (t) => {
   await t.step(
-    "logTask() outside any context auto-inits a session",
+    "logFold() outside any context auto-inits a session",
     async () => {
       const output = createMockOutput();
-      const result = await logTask("Auto-init", {
+      const result = await logFold("Auto-init", {
         mode: "plain",
         output,
       }, () => {
@@ -26,11 +26,11 @@ Deno.test("context", async (t) => {
     },
   );
 
-  await t.step("nested logTask() calls create correct hierarchy", async () => {
+  await t.step("nested logFold() calls create correct hierarchy", async () => {
     const output = createMockOutput();
-    await logTask("Root", { mode: "plain", output }, async () => {
-      await logTask("Child", async () => {
-        await logTask("Grandchild", () => {
+    await logFold("Root", { mode: "plain", output }, async () => {
+      await logFold("Child", async () => {
+        await logFold("Grandchild", () => {
           // Verify we're inside nested context
           const store = storage.getStore();
           assertEquals(store !== undefined, true);
@@ -43,10 +43,10 @@ Deno.test("context", async (t) => {
   });
 
   await t.step(
-    "Promise.all with multiple logTask() → separate branches",
+    "Promise.all with multiple logFold() → separate branches",
     async () => {
       const output = createMockOutput();
-      await logTask(
+      await logFold(
         "Root",
         { mode: "plain", output },
         async () => {
@@ -54,12 +54,12 @@ Deno.test("context", async (t) => {
           const root = parentStore.node!;
 
           await Promise.all([
-            logTask("Branch A", () => {
+            logFold("Branch A", () => {
               const store = storage.getStore()!;
               assertEquals(store.node!.title, "Branch A");
               assertEquals(store.node!.parent, root);
             }),
-            logTask("Branch B", () => {
+            logFold("Branch B", () => {
               const store = storage.getStore()!;
               assertEquals(store.node!.title, "Branch B");
               assertEquals(store.node!.parent, root);
@@ -75,15 +75,15 @@ Deno.test("context", async (t) => {
   );
 
   await t.step(
-    "log() goes to the correct task in concurrent context",
+    "log() goes to the correct fold in concurrent context",
     async () => {
       const output = createMockOutput();
-      await logTask(
+      await logFold(
         "Root",
         { mode: "plain", output },
         async () => {
           await Promise.all([
-            logTask("Task A", () => {
+            logFold("Fold A", () => {
               log("message from A");
               const store = storage.getStore()!;
               assertEquals(
@@ -91,7 +91,7 @@ Deno.test("context", async (t) => {
                 true,
               );
             }),
-            logTask("Task B", () => {
+            logFold("Fold B", () => {
               log("message from B");
               const store = storage.getStore()!;
               assertEquals(
@@ -106,10 +106,10 @@ Deno.test("context", async (t) => {
   );
 
   await t.step(
-    "logTask() with options at top level configures the session",
+    "logFold() with options at top level configures the session",
     async () => {
       const output = createMockOutput();
-      await logTask(
+      await logFold(
         "Configured",
         { mode: "plain", output, tailLines: 3 },
         () => {
@@ -121,16 +121,16 @@ Deno.test("context", async (t) => {
   );
 
   await t.step(
-    "logTask() with session options at nested level throws",
+    "logFold() with session options at nested level throws",
     async () => {
       const output = createMockOutput();
       await assertRejects(
         async () => {
-          await logTask(
+          await logFold(
             "Root",
             { mode: "plain", output },
             async () => {
-              await logTask(
+              await logFold(
                 "Nested",
                 { mode: "tty" } as Record<string, unknown>,
                 () => {},
@@ -145,14 +145,14 @@ Deno.test("context", async (t) => {
   );
 
   await t.step(
-    "logTask() with per-task options (map/filter) at nested level works",
+    "logFold() with per-fold options (map/filter) at nested level works",
     async () => {
       const output = createMockOutput();
-      await logTask(
+      await logFold(
         "Root",
         { mode: "plain", output },
         async () => {
-          await logTask(
+          await logFold(
             "Child",
             { map: (line: string) => line.toUpperCase() },
             () => {
@@ -170,7 +170,7 @@ Deno.test("context", async (t) => {
     "map/filter compose: local map → local filter → parent composedFlatMap",
     async () => {
       const output = createMockOutput();
-      await logTask(
+      await logFold(
         "Root",
         {
           mode: "plain",
@@ -178,7 +178,7 @@ Deno.test("context", async (t) => {
           filter: (line: string) => !line.includes("SECRET"),
         },
         async () => {
-          await logTask(
+          await logFold(
             "Child",
             {
               map: (line: string) => line.replace(/\/home\/user/g, "~"),
@@ -209,7 +209,7 @@ Deno.test("context", async (t) => {
     async () => {
       const output = createMockOutput();
       try {
-        await logTask(
+        await logFold(
           "Root",
           {
             mode: "plain",
@@ -217,7 +217,7 @@ Deno.test("context", async (t) => {
             filter: (line: string) => !line.includes("SECRET"),
           },
           async () => {
-            await logTask("Failing", () => {
+            await logFold("Failing", () => {
               log("normal line");
               log("SECRET_token_123");
               throw new Error("boom");
@@ -239,7 +239,7 @@ Deno.test("context", async (t) => {
     "original lines always preserved in logLines[] regardless of map/filter",
     async () => {
       const output = createMockOutput();
-      await logTask(
+      await logFold(
         "Root",
         {
           mode: "plain",
@@ -262,11 +262,11 @@ Deno.test("context", async (t) => {
   );
 
   await t.step(
-    "setCurrentTaskWarning() sets task status to warning",
+    "setCurrentFoldWarning() sets fold status to warning",
     async () => {
       const output = createMockOutput();
-      await logTask("Warned", { mode: "plain", output }, () => {
-        setCurrentTaskWarning();
+      await logFold("Warned", { mode: "plain", output }, () => {
+        setCurrentFoldWarning();
 
         const store = storage.getStore()!;
         assertEquals(store.node!.status, "warning");
@@ -278,11 +278,11 @@ Deno.test("context", async (t) => {
   );
 
   await t.step(
-    "setCurrentTaskSkipped() sets task status to skipped",
+    "setCurrentFoldSkipped() sets fold status to skipped",
     async () => {
       const output = createMockOutput();
-      await logTask("Skipped", { mode: "plain", output }, () => {
-        setCurrentTaskSkipped();
+      await logFold("Skipped", { mode: "plain", output }, () => {
+        setCurrentFoldSkipped();
 
         const store = storage.getStore()!;
         assertEquals(store.node!.status, "skipped");
@@ -293,10 +293,10 @@ Deno.test("context", async (t) => {
     },
   );
 
-  await t.step("setCurrentTaskTitle() updates task title", async () => {
+  await t.step("setCurrentFoldTitle() updates fold title", async () => {
     const output = createMockOutput();
-    await logTask("Original", { mode: "plain", output }, () => {
-      setCurrentTaskTitle("Updated");
+    await logFold("Original", { mode: "plain", output }, () => {
+      setCurrentFoldTitle("Updated");
 
       const store = storage.getStore()!;
       assertEquals(store.node!.title, "Updated");
@@ -304,14 +304,14 @@ Deno.test("context", async (t) => {
   });
 
   await t.step(
-    "logTask(fn) — title-less overload creates structural-only task",
+    "logFold(fn) — title-less overload creates structural-only fold",
     async () => {
       const output = createMockOutput();
-      await logTask(
+      await logFold(
         "Root",
         { mode: "plain", output },
         async () => {
-          await logTask(() => {
+          await logFold(() => {
             const store = storage.getStore()!;
             assertEquals(store.node!.title, undefined);
           });
@@ -321,14 +321,14 @@ Deno.test("context", async (t) => {
   );
 
   await t.step(
-    "logTask(options, fn) — title-less overload with options",
+    "logFold(options, fn) — title-less overload with options",
     async () => {
       const output = createMockOutput();
-      await logTask(
+      await logFold(
         "Root",
         { mode: "plain", output },
         async () => {
-          await logTask(
+          await logFold(
             { tailLines: 2 },
             () => {
               const store = storage.getStore()!;
@@ -342,24 +342,24 @@ Deno.test("context", async (t) => {
   );
 
   await t.step(
-    "title-less task children nest correctly under nearest titled ancestor",
+    "title-less fold children nest correctly under nearest titled ancestor",
     async () => {
       const output = createMockOutput();
-      await logTask(
+      await logFold(
         "Root",
         { mode: "plain", output },
         async () => {
           const rootStore = storage.getStore()!;
           const rootNode = rootStore.node!;
 
-          await logTask(async () => {
-            // Inside a title-less task
+          await logFold(async () => {
+            // Inside a title-less fold
             const structuralStore = storage.getStore()!;
             const structuralNode = structuralStore.node!;
             assertEquals(structuralNode.title, undefined);
             assertEquals(structuralNode.parent, rootNode);
 
-            await logTask("Visible Child", () => {
+            await logFold("Visible Child", () => {
               const store = storage.getStore()!;
               assertEquals(store.node!.title, "Visible Child");
               // Parent is the structural node
@@ -369,7 +369,7 @@ Deno.test("context", async (t) => {
             });
           });
 
-          // Structural task is a child of root
+          // Structural fold is a child of root
           assertEquals(rootNode.children.length, 1);
           assertEquals(rootNode.children[0].title, undefined);
           // Visible child is nested under structural
@@ -383,7 +383,7 @@ Deno.test("context", async (t) => {
 Deno.test(
   "log() outside any context falls back to process.stderr.write()",
   () => {
-    // log() accesses process.env.LOG_FOLD_STRICT, needs --allow-env on the test task
+    // log() accesses process.env.LOG_FOLD_STRICT, needs --allow-env on the test fold
     log("test line outside context");
     // If we get here without error, the fallback worked
   },

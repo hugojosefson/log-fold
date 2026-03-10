@@ -1,4 +1,4 @@
-import type { TasksProgress } from "./task-node.ts";
+import type { FoldsProgress } from "./fold-node.ts";
 
 /**
  * Formats a duration in milliseconds for display.
@@ -23,6 +23,6 @@ export function formatDuration(ms: number): string {
   return `${h}h ${m % 60}m`;
 }
 
-export function formatTasksProgress(progress: TasksProgress) {
+export function formatFoldsProgress(progress: FoldsProgress) {
   return `${progress.completed}/${progress.total}`;
 }

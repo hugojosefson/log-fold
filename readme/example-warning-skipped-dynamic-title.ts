@@ -1,36 +1,36 @@
 #!/usr/bin/env -S deno run
 import {
   log,
-  logTask,
-  setCurrentTaskSkipped,
-  setCurrentTaskTitle,
-  setCurrentTaskWarning,
+  logFold,
+  setCurrentFoldSkipped,
+  setCurrentFoldTitle,
+  setCurrentFoldWarning,
 } from "../mod.ts";
 
-await logTask("Pipeline", async () => {
-  // Warning status — task shows ⚠ instead of ✓
-  await logTask("Deploy", async () => {
+await logFold("Pipeline", async () => {
+  // Warning status — fold shows ⚠ instead of ✓
+  await logFold("Deploy", async () => {
     const result = await deploy();
     if (result.deprecationWarnings.length > 0) {
       log(`${result.deprecationWarnings.length} deprecation warnings`);
-      setCurrentTaskWarning();
+      setCurrentFoldWarning();
     }
   });
 
-  // Skip status — task shows ⊘ instead of ✓
-  await logTask("Build cache", async () => {
+  // Skip status — fold shows ⊘ instead of ✓
+  await logFold("Build cache", async () => {
     if (await cacheExists()) {
-      setCurrentTaskSkipped();
+      setCurrentFoldSkipped();
       return;
     }
     // ... build cache ...
   });
 
   // Dynamic title — updated on the next render tick
-  await logTask("Download", async () => {
+  await logFold("Download", async () => {
     const files = await listFiles();
     for (const [i, file] of files.entries()) {
-      setCurrentTaskTitle(`Download (${i + 1}/${files.length})`);
+      setCurrentFoldTitle(`Download (${i + 1}/${files.length})`);
       await downloadFile(file);
     }
   });

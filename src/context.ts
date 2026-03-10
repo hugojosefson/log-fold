@@ -7,25 +7,25 @@ import {
 import { storage } from "./storage.ts";
 import {
   appendLog,
-  createTaskNode,
-  failTask,
+  createFoldNode,
+  failFold,
+  FOLD_OPTIONS_KEYS,
+  type FoldNode,
+  type FoldOptions,
   setTitle,
-  startTask,
-  succeedTask,
-  TASK_OPTIONS_KEYS,
-  type TaskNode,
-  type TaskOptions,
-} from "./task-node.ts";
+  startFold,
+  succeedFold,
+} from "./fold-node.ts";
 
-/** Shared run-and-finalize logic for both top-level and nested tasks. */
-async function runTask<T, A extends unknown[] = unknown[]>(
-  node: TaskNode,
+/** Shared run-and-finalize logic for both top-level and nested folds. */
+async function runFold<T, A extends unknown[] = unknown[]>(
+  node: FoldNode,
   session: Session,
   fn: (...args: A) => T | Promise<T>,
   options?: { stopRenderer?: boolean },
 ): Promise<T> {
-  startTask(node);
-  session.renderer.onTaskStart(node);
+  startFold(node);
+  session.renderer.onFoldStart(node);
 
   try {
     const result = await storage.run(
@@ -33,17 +33,17 @@ async function runTask<T, A extends unknown[] = unknown[]>(
       (...args: A) => Promise.resolve(fn(...args)),
     );
     if (node.status === "running") {
-      succeedTask(node);
+      succeedFold(node);
     }
     return result;
   } catch (e) {
-    failTask(node, e instanceof Error ? e : new Error(String(e)));
+    failFold(node, e instanceof Error ? e : new Error(String(e)));
     throw e;
   } finally {
     if (node.finishedAt === undefined) {
       node.finishedAt = Date.now();
     }
-    session.renderer.onTaskEnd(node);
+    session.renderer.onFoldEnd(node);
     if (options?.stopRenderer) {
       session.renderer.stop();
     }
@@ -51,49 +51,49 @@ async function runTask<T, A extends unknown[] = unknown[]>(
 }
 
 /**
- * Create and run a task. If called inside an existing task, nests as a child.
+ * Create a fold and execute its body. If called inside an existing fold, nests as a child.
  * If called at the top level (no active context), auto-initializes a session
  * with default options.
  */
-export function logTask<T, A extends unknown[] = unknown[]>(
+export function logFold<T, A extends unknown[] = unknown[]>(
   fn: (...args: A) => T | Promise<T>,
 ): Promise<T>;
-export function logTask<T, A extends unknown[] = unknown[]>(
-  options: TaskOptions,
+export function logFold<T, A extends unknown[] = unknown[]>(
+  options: FoldOptions,
   fn: (...args: A) => T | Promise<T>,
 ): Promise<T>;
-export function logTask<T, A extends unknown[] = unknown[]>(
-  options: SessionOptions & TaskOptions,
+export function logFold<T, A extends unknown[] = unknown[]>(
+  options: SessionOptions & FoldOptions,
   fn: (...args: A) => T | Promise<T>,
 ): Promise<T>;
-export function logTask<T, A extends unknown[] = unknown[]>(
+export function logFold<T, A extends unknown[] = unknown[]>(
   title: string | undefined,
   fn: (...args: A) => T | Promise<T>,
 ): Promise<T>;
-export function logTask<T, A extends unknown[] = unknown[]>(
+export function logFold<T, A extends unknown[] = unknown[]>(
   title: string | undefined,
-  options: TaskOptions,
+  options: FoldOptions,
   fn: (...args: A) => T | Promise<T>,
 ): Promise<T>;
-export function logTask<T, A extends unknown[] = unknown[]>(
+export function logFold<T, A extends unknown[] = unknown[]>(
   title: string | undefined,
-  options: SessionOptions & TaskOptions,
+  options: SessionOptions & FoldOptions,
   fn: (...args: A) => T | Promise<T>,
 ): Promise<T>;
 
-export function logTask<T, A extends unknown[] = unknown[]>(
+export function logFold<T, A extends unknown[] = unknown[]>(
   titleOrFnOrOptions:
     | string
     | undefined
     | ((...args: A) => T | Promise<T>)
-    | (SessionOptions & TaskOptions),
+    | (SessionOptions & FoldOptions),
   fnOrOptions?:
     | ((...args: A) => T | Promise<T>)
-    | TaskOptions
-    | (SessionOptions & TaskOptions),
+    | FoldOptions
+    | (SessionOptions & FoldOptions),
   maybeFn?: (...args: A) => T | Promise<T>,
 ): Promise<T> {
-  const { title, options, fn } = resolveLogTaskArgs(
+  const { title, options, fn } = resolveLogFoldArgs(
     titleOrFnOrOptions,
     fnOrOptions,
     maybeFn,
@@ -106,14 +106,14 @@ export function logTask<T, A extends unknown[] = unknown[]>(
     const session = new Session(
       options as SessionOptions | undefined,
     );
-    const root = createTaskNode(
+    const root = createFoldNode(
       title,
       undefined,
-      options as TaskOptions | undefined,
+      options as FoldOptions | undefined,
     );
     session.root = root;
     session.renderer.start(session.root);
-    return runTask(root, session, fn, { stopRenderer: true });
+    return runFold(root, session, fn, { stopRenderer: true });
   }
 
   if (options) {
@@ -122,11 +122,11 @@ export function logTask<T, A extends unknown[] = unknown[]>(
       throw new Error(
         `Session options (${SESSION_OPTIONS_KEYS.join(", ")}) are only ` +
           `allowed at the top level${
-            title ? ` (in logTask("${title}"))` : ""
+            title ? ` (in logFold("${title}"))` : ""
           }. ` +
-          `Nested logTask() calls inherit the session ` +
-          `from their parent. Per-task options (${
-            TASK_OPTIONS_KEYS.join(", ")
+          `Nested logFold() calls inherit the session ` +
+          `from their parent. Per-fold options (${
+            FOLD_OPTIONS_KEYS.join(", ")
           }) ` +
           `are allowed at any level.`,
       );
@@ -135,24 +135,24 @@ export function logTask<T, A extends unknown[] = unknown[]>(
 
   // Nested call — create child under current context
   const { session, node: parent } = store;
-  const child = createTaskNode(
+  const child = createFoldNode(
     title,
     parent,
-    options as TaskOptions | undefined,
+    options as FoldOptions | undefined,
   );
-  return runTask(child, session, fn);
+  return runFold(child, session, fn);
 }
 
-function resolveLogTaskArgs<T>(
+function resolveLogFoldArgs<T>(
   titleOrFnOrOptions:
     | string
     | undefined
     | (() => T | Promise<T>)
-    | (SessionOptions & TaskOptions),
+    | (SessionOptions & FoldOptions),
   fnOrOptions?:
     | (() => T | Promise<T>)
-    | TaskOptions
-    | (SessionOptions & TaskOptions),
+    | FoldOptions
+    | (SessionOptions & FoldOptions),
   maybeFn?: () => T | Promise<T>,
 ): {
   title: string | undefined;
@@ -160,7 +160,7 @@ function resolveLogTaskArgs<T>(
   fn: () => T | Promise<T>;
 } {
   if (typeof titleOrFnOrOptions === "function") {
-    // logTask(fn)
+    // logFold(fn)
     return { title: undefined, options: undefined, fn: titleOrFnOrOptions };
   }
 
@@ -168,7 +168,7 @@ function resolveLogTaskArgs<T>(
     typeof titleOrFnOrOptions === "object" &&
     titleOrFnOrOptions !== null
   ) {
-    // logTask(options, fn)
+    // logFold(options, fn)
     return {
       title: undefined,
       options: titleOrFnOrOptions,
@@ -176,14 +176,14 @@ function resolveLogTaskArgs<T>(
     };
   }
 
-  // logTask(title, ...) — title is string | undefined
+  // logFold(title, ...) — title is string | undefined
   const title = titleOrFnOrOptions;
   if (typeof fnOrOptions === "function") {
-    // logTask(title, fn)
+    // logFold(title, fn)
     return { title, options: undefined, fn: fnOrOptions };
   }
 
-  // logTask(title, options, fn)
+  // logFold(title, options, fn)
   return {
     title,
     options: fnOrOptions as Record<string, unknown> | undefined,
@@ -192,10 +192,10 @@ function resolveLogTaskArgs<T>(
 }
 
 /**
- * Append log output to the current task. Splits on newlines — multi-line
+ * Append log output to the current fold. Splits on newlines — multi-line
  * strings produce multiple log entries. Strips trailing \r from each line.
  *
- * If called outside any task context, falls back to process.stderr.write(line + "\n").
+ * If called outside any fold context, falls back to process.stderr.write(line + "\n").
  * If LOG_FOLD_STRICT env var is set, throws instead.
  */
 export function log(text: string): void {
@@ -203,11 +203,11 @@ export function log(text: string): void {
   const store = storage.getStore();
 
   if (!store || !store.node) {
-    // Outside any task context
+    // Outside any fold context
     if (process.env.LOG_FOLD_STRICT) {
       throw new Error(
-        "log() called outside a logTask() context. " +
-          "Wrap your code in a logTask() call, or unset the LOG_FOLD_STRICT environment variable.",
+        "log() called outside a logFold() context. " +
+          "Wrap your code in a logFold() call, or unset the LOG_FOLD_STRICT environment variable.",
       );
     }
     // Fall back to stderr
@@ -225,42 +225,42 @@ export function log(text: string): void {
 }
 
 /**
- * Mark the current task as completed with warnings.
+ * Set the current fold's status to warning.
  * Sets status to "warning" without setting finishedAt.
  */
-export function setCurrentTaskWarning(): void {
+export function setCurrentFoldWarning(): void {
   const store = storage.getStore();
   if (!store?.node) {
     throw new Error(
-      "setCurrentTaskWarning() called outside a logTask() context.",
+      "setCurrentFoldWarning() called outside a logFold() context.",
     );
   }
   store.node.status = "warning";
 }
 
 /**
- * Mark the current task as skipped.
+ * Set the current fold's status to skipped.
  * Sets status to "skipped" without setting finishedAt.
  */
-export function setCurrentTaskSkipped(): void {
+export function setCurrentFoldSkipped(): void {
   const store = storage.getStore();
   if (!store?.node) {
     throw new Error(
-      "setCurrentTaskSkipped() called outside a logTask() context.",
+      "setCurrentFoldSkipped() called outside a logFold() context.",
     );
   }
   store.node.status = "skipped";
 }
 
 /**
- * Update the current task's display title.
+ * Update the current fold's display title.
  * The renderer picks up the change on the next tick.
  */
-export function setCurrentTaskTitle(title: string): void {
+export function setCurrentFoldTitle(title: string): void {
   const store = storage.getStore();
   if (!store?.node) {
     throw new Error(
-      "setCurrentTaskTitle() called outside a logTask() context.",
+      "setCurrentFoldTitle() called outside a logFold() context.",
     );
   }
   setTitle(store.node, title);

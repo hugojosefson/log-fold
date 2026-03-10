@@ -2,22 +2,22 @@ import { assertEquals } from "@std/assert";
 import {
   ancestorChain,
   appendLog,
-  countTasks,
-  createTaskNode,
+  countFolds,
+  createFoldNode,
   durationMillis,
-  failTask,
+  failFold,
   findRunningLeaves,
   logBytes,
   setTitle,
-  startTask,
-  succeedTask,
+  startFold,
+  succeedFold,
   tailLogLines,
   walkTree,
-} from "../src/task-node.ts";
+} from "../src/fold-node.ts";
 
-Deno.test("createTaskNode", async (t) => {
+Deno.test("createFoldNode", async (t) => {
   await t.step("correct defaults: pending, no children, no logs", () => {
-    const node = createTaskNode("Test");
+    const node = createFoldNode("Test");
     assertEquals(node.title, "Test");
     assertEquals(node.status, "pending");
     assertEquals(node.children.length, 0);
@@ -32,16 +32,16 @@ Deno.test("createTaskNode", async (t) => {
   });
 
   await t.step("with parent: appended to parent's children", () => {
-    const parent = createTaskNode("Parent");
-    const child = createTaskNode("Child", parent);
+    const parent = createFoldNode("Parent");
+    const child = createFoldNode("Child", parent);
     assertEquals(parent.children.length, 1);
     assertEquals(parent.children[0], child);
     assertEquals(child.parent, parent);
   });
 
-  await t.step("with taskOptions: composedFlatMap stored on node", () => {
-    const node = createTaskNode("Test", undefined, {
-      map: (line) => line.toUpperCase(),
+  await t.step("with foldOptions: composedFlatMap stored on node", () => {
+    const node = createFoldNode("Test", undefined, {
+      map: (line: string) => line.toUpperCase(),
     });
     assertEquals(node.composedFlatMap("hello"), ["HELLO"]);
   });
@@ -49,12 +49,12 @@ Deno.test("createTaskNode", async (t) => {
   await t.step(
     "with parent composedFlatMap: child map+filter composed with parent",
     () => {
-      const parent = createTaskNode("Parent", undefined, {
-        filter: (line) => !line.includes("SECRET"),
+      const parent = createFoldNode("Parent", undefined, {
+        filter: (line: string) => !line.includes("SECRET"),
       });
 
-      const child = createTaskNode("Child", parent, {
-        map: (line) => line.replace(/\/home\/user/g, "~"),
+      const child = createFoldNode("Child", parent, {
+        map: (line: string) => line.replace(/\/home\/user/g, "~"),
       });
 
       // Input that maps then gets filtered by parent
@@ -74,13 +74,13 @@ Deno.test("createTaskNode", async (t) => {
   await t.step(
     "with both map and filter: local map → local filter → parent composedFlatMap",
     () => {
-      const parent = createTaskNode("Parent", undefined, {
-        map: (line) => `[parent] ${line}`,
+      const parent = createFoldNode("Parent", undefined, {
+        map: (line: string) => `[parent] ${line}`,
       });
 
-      const child = createTaskNode("Child", parent, {
-        map: (line) => line.toUpperCase(),
-        filter: (line) => line.length < 20,
+      const child = createFoldNode("Child", parent, {
+        map: (line: string) => line.toUpperCase(),
+        filter: (line: string) => line.length < 20,
       });
 
       // Short line passes filter after map
@@ -95,12 +95,12 @@ Deno.test("createTaskNode", async (t) => {
   );
 
   await t.step("filter only (no map): filter applied then parent", () => {
-    const parent = createTaskNode("Parent", undefined, {
-      map: (line) => `[P] ${line}`,
+    const parent = createFoldNode("Parent", undefined, {
+      map: (line: string) => `[P] ${line}`,
     });
 
-    const child = createTaskNode("Child", parent, {
-      filter: (line) => line !== "skip",
+    const child = createFoldNode("Child", parent, {
+      filter: (line: string) => line !== "skip",
     });
 
     assertEquals(child.composedFlatMap("keep"), ["[P] keep"]);
@@ -110,30 +110,30 @@ Deno.test("createTaskNode", async (t) => {
   await t.step(
     "tailLines/spinner inheritance: inherits from nearest ancestor",
     () => {
-      const root = createTaskNode("Root", undefined, { tailLines: 10 });
-      const middle = createTaskNode("Middle", root);
-      const leaf = createTaskNode("Leaf", middle);
+      const root = createFoldNode("Root", undefined, { tailLines: 10 });
+      const middle = createFoldNode("Middle", root);
+      const leaf = createFoldNode("Leaf", middle);
 
       assertEquals(root.tailLines, 10);
       assertEquals(middle.tailLines, 10);
       assertEquals(leaf.tailLines, 10);
 
       // Child with explicit tailLines overrides
-      const override = createTaskNode("Override", root, { tailLines: 3 });
+      const override = createFoldNode("Override", root, { tailLines: 3 });
       assertEquals(override.tailLines, 3);
 
       // Grandchild of override inherits its value
-      const grandchild = createTaskNode("Grand", override);
+      const grandchild = createFoldNode("Grand", override);
       assertEquals(grandchild.tailLines, 3);
     },
   );
 
   await t.step("spinner inheritance: inherits from nearest ancestor", () => {
     const customSpinner = { interval: 100, frames: ["A", "B"] };
-    const root = createTaskNode("Root", undefined, {
+    const root = createFoldNode("Root", undefined, {
       spinner: customSpinner,
     });
-    const child = createTaskNode("Child", root);
+    const child = createFoldNode("Child", root);
 
     assertEquals(child.spinner, customSpinner);
     assertEquals(child.spinner.interval, 100);
@@ -141,11 +141,11 @@ Deno.test("createTaskNode", async (t) => {
   });
 });
 
-Deno.test("startTask", async (t) => {
+Deno.test("startFold", async (t) => {
   await t.step("status → running, startedAt set", () => {
-    const node = createTaskNode("Test");
+    const node = createFoldNode("Test");
     const before = Date.now();
-    startTask(node);
+    startFold(node);
     const after = Date.now();
 
     assertEquals(node.status, "running");
@@ -155,12 +155,12 @@ Deno.test("startTask", async (t) => {
   });
 });
 
-Deno.test("succeedTask", async (t) => {
+Deno.test("succeedFold", async (t) => {
   await t.step("status → success, finishedAt set", () => {
-    const node = createTaskNode("Test");
-    startTask(node);
+    const node = createFoldNode("Test");
+    startFold(node);
     const before = Date.now();
-    succeedTask(node);
+    succeedFold(node);
     const after = Date.now();
 
     assertEquals(node.status, "success");
@@ -170,13 +170,13 @@ Deno.test("succeedTask", async (t) => {
   });
 });
 
-Deno.test("failTask", async (t) => {
+Deno.test("failFold", async (t) => {
   await t.step("status → fail, error stored, finishedAt set", () => {
-    const node = createTaskNode("Test");
-    startTask(node);
+    const node = createFoldNode("Test");
+    startFold(node);
     const err = new Error("oops");
     const before = Date.now();
-    failTask(node, err);
+    failFold(node, err);
     const after = Date.now();
 
     assertEquals(node.status, "fail");
@@ -186,10 +186,10 @@ Deno.test("failTask", async (t) => {
     assertEquals(node.finishedAt! <= after, true);
   });
 
-  await t.step("failTask without error: error is undefined", () => {
-    const node = createTaskNode("Test");
-    startTask(node);
-    failTask(node);
+  await t.step("failFold without error: error is undefined", () => {
+    const node = createFoldNode("Test");
+    startFold(node);
+    failFold(node);
 
     assertEquals(node.status, "fail");
     assertEquals(node.error, undefined);
@@ -198,7 +198,7 @@ Deno.test("failTask", async (t) => {
 
 Deno.test("setTitle", async (t) => {
   await t.step("updates node title in-place", () => {
-    const node = createTaskNode("Original");
+    const node = createFoldNode("Original");
     assertEquals(node.title, "Original");
     setTitle(node, "Updated");
     assertEquals(node.title, "Updated");
@@ -207,7 +207,7 @@ Deno.test("setTitle", async (t) => {
 
 Deno.test("appendLog", async (t) => {
   await t.step("pushes a single line to logLines[] (no splitting)", () => {
-    const node = createTaskNode("Test");
+    const node = createFoldNode("Test");
     appendLog(node, "line 1");
     appendLog(node, "line 2\nwith newline");
 
@@ -220,7 +220,7 @@ Deno.test("appendLog", async (t) => {
 
 Deno.test("tailLogLines", async (t) => {
   await t.step("returns last N lines", () => {
-    const node = createTaskNode("Test");
+    const node = createFoldNode("Test");
     appendLog(node, "a");
     appendLog(node, "b");
     appendLog(node, "c");
@@ -232,7 +232,7 @@ Deno.test("tailLogLines", async (t) => {
   });
 
   await t.step("handles N > total", () => {
-    const node = createTaskNode("Test");
+    const node = createFoldNode("Test");
     appendLog(node, "a");
     appendLog(node, "b");
 
@@ -241,7 +241,7 @@ Deno.test("tailLogLines", async (t) => {
   });
 
   await t.step("returns empty array for no logs", () => {
-    const node = createTaskNode("Test");
+    const node = createFoldNode("Test");
     const tail = tailLogLines(node, 5);
     assertEquals(tail, []);
   });
@@ -249,12 +249,12 @@ Deno.test("tailLogLines", async (t) => {
 
 Deno.test("durationMillis", async (t) => {
   await t.step("returns undefined if not started", () => {
-    const node = createTaskNode("Test");
+    const node = createFoldNode("Test");
     assertEquals(durationMillis(node), undefined);
   });
 
-  await t.step("returns elapsed ms for running task", () => {
-    const node = createTaskNode("Test");
+  await t.step("returns elapsed ms for running fold", () => {
+    const node = createFoldNode("Test");
     node.startedAt = Date.now() - 500;
 
     const ms = durationMillis(node);
@@ -263,8 +263,8 @@ Deno.test("durationMillis", async (t) => {
     assertEquals(ms! < 2000, true);
   });
 
-  await t.step("returns exact duration for completed task", () => {
-    const node = createTaskNode("Test");
+  await t.step("returns exact duration for completed fold", () => {
+    const node = createFoldNode("Test");
     node.startedAt = 1000;
     node.finishedAt = 2500;
 
@@ -274,10 +274,10 @@ Deno.test("durationMillis", async (t) => {
 
 Deno.test("walkTree", async (t) => {
   await t.step("correct DFS order and depth values", () => {
-    const root = createTaskNode("Root");
-    const a = createTaskNode("A", root);
-    const a1 = createTaskNode("A1", a);
-    const b = createTaskNode("B", root);
+    const root = createFoldNode("Root");
+    const a = createFoldNode("A", root);
+    const a1 = createFoldNode("A1", a);
+    const b = createFoldNode("B", root);
 
     const walked = [...walkTree(root)];
 
@@ -289,7 +289,7 @@ Deno.test("walkTree", async (t) => {
   });
 
   await t.step("single node yields just that node at depth 0", () => {
-    const root = createTaskNode("Only");
+    const root = createFoldNode("Only");
     const walked = [...walkTree(root)];
     assertEquals(walked.length, 1);
     assertEquals(walked[0], { node: root, depth: 0 });
@@ -298,17 +298,17 @@ Deno.test("walkTree", async (t) => {
 
 Deno.test("findRunningLeaves", async (t) => {
   await t.step("multiple concurrent running leaves", () => {
-    const root = createTaskNode("Root");
-    startTask(root);
+    const root = createFoldNode("Root");
+    startFold(root);
 
-    const a = createTaskNode("A", root);
-    startTask(a);
+    const a = createFoldNode("A", root);
+    startFold(a);
 
-    const b = createTaskNode("B", root);
-    startTask(b);
+    const b = createFoldNode("B", root);
+    startFold(b);
 
-    const c = createTaskNode("C", root);
-    startTask(c);
+    const c = createFoldNode("C", root);
+    startFold(c);
 
     const leaves = findRunningLeaves(root);
     assertEquals(leaves.length, 3);
@@ -318,14 +318,14 @@ Deno.test("findRunningLeaves", async (t) => {
   });
 
   await t.step("node with running children is not a leaf", () => {
-    const root = createTaskNode("Root");
-    startTask(root);
+    const root = createFoldNode("Root");
+    startFold(root);
 
-    const child = createTaskNode("Child", root);
-    startTask(child);
+    const child = createFoldNode("Child", root);
+    startFold(child);
 
-    const grandchild = createTaskNode("Grandchild", child);
-    startTask(grandchild);
+    const grandchild = createFoldNode("Grandchild", child);
+    startFold(grandchild);
 
     const leaves = findRunningLeaves(root);
     // Only grandchild is a leaf; root and child have running children
@@ -336,12 +336,12 @@ Deno.test("findRunningLeaves", async (t) => {
   await t.step(
     "completed children don't prevent parent from being leaf",
     () => {
-      const root = createTaskNode("Root");
-      startTask(root);
+      const root = createFoldNode("Root");
+      startFold(root);
 
-      const child = createTaskNode("Child", root);
-      startTask(child);
-      succeedTask(child);
+      const child = createFoldNode("Child", root);
+      startFold(child);
+      succeedFold(child);
 
       const leaves = findRunningLeaves(root);
       // root is running with no running children → it's a leaf
@@ -353,9 +353,9 @@ Deno.test("findRunningLeaves", async (t) => {
 
 Deno.test("ancestorChain", async (t) => {
   await t.step("correct root-to-node path", () => {
-    const root = createTaskNode("Root");
-    const mid = createTaskNode("Mid", root);
-    const leaf = createTaskNode("Leaf", mid);
+    const root = createFoldNode("Root");
+    const mid = createFoldNode("Mid", root);
+    const leaf = createFoldNode("Leaf", mid);
 
     const chain = ancestorChain(leaf);
     assertEquals(chain.length, 3);
@@ -365,34 +365,34 @@ Deno.test("ancestorChain", async (t) => {
   });
 
   await t.step("root node returns single-element chain", () => {
-    const root = createTaskNode("Root");
+    const root = createFoldNode("Root");
     const chain = ancestorChain(root);
     assertEquals(chain.length, 1);
     assertEquals(chain[0], root);
   });
 });
 
-Deno.test("countTasks", async (t) => {
+Deno.test("countFolds", async (t) => {
   await t.step("correct total and completed counts", () => {
-    const root = createTaskNode("Root");
-    startTask(root);
+    const root = createFoldNode("Root");
+    startFold(root);
 
-    const a = createTaskNode("A", root);
-    startTask(a);
-    succeedTask(a);
+    const a = createFoldNode("A", root);
+    startFold(a);
+    succeedFold(a);
 
-    const b = createTaskNode("B", root);
-    startTask(b);
-    failTask(b, new Error("fail"));
+    const b = createFoldNode("B", root);
+    startFold(b);
+    failFold(b, new Error("fail"));
 
-    const c = createTaskNode("C", root);
-    startTask(c);
+    const c = createFoldNode("C", root);
+    startFold(c);
     // still running
 
-    const d = createTaskNode("D", root);
+    const d = createFoldNode("D", root);
     // pending
 
-    const { total, completed } = countTasks(root);
+    const { total, completed } = countFolds(root);
     assertEquals(total, 5); // Root, A, B, C, D
     assertEquals(completed, 2); // A (success), B (fail)
 
@@ -401,37 +401,37 @@ Deno.test("countTasks", async (t) => {
     void d;
   });
 
-  await t.step("title-less tasks excluded from counts", () => {
-    const root = createTaskNode("Root");
-    startTask(root);
+  await t.step("title-less folds excluded from counts", () => {
+    const root = createFoldNode("Root");
+    startFold(root);
 
-    const structural = createTaskNode(undefined, root);
-    startTask(structural);
+    const structural = createFoldNode(undefined, root);
+    startFold(structural);
 
-    const child = createTaskNode("Child", structural);
-    startTask(child);
-    succeedTask(child);
+    const child = createFoldNode("Child", structural);
+    startFold(child);
+    succeedFold(child);
 
-    const { total, completed } = countTasks(root);
+    const { total, completed } = countFolds(root);
     assertEquals(total, 2); // Root + Child (structural excluded)
     assertEquals(completed, 1); // Child
   });
 
   await t.step("warning and skipped count as completed", () => {
-    const root = createTaskNode("Root");
-    startTask(root);
+    const root = createFoldNode("Root");
+    startFold(root);
 
-    const warned = createTaskNode("Warned", root);
-    startTask(warned);
+    const warned = createFoldNode("Warned", root);
+    startFold(warned);
     warned.status = "warning";
     warned.finishedAt = Date.now();
 
-    const skipped = createTaskNode("Skipped", root);
-    startTask(skipped);
+    const skipped = createFoldNode("Skipped", root);
+    startFold(skipped);
     skipped.status = "skipped";
     skipped.finishedAt = Date.now();
 
-    const { total, completed } = countTasks(root);
+    const { total, completed } = countFolds(root);
     assertEquals(total, 3); // Root, Warned, Skipped
     assertEquals(completed, 2); // Warned + Skipped
   });
@@ -439,7 +439,7 @@ Deno.test("countTasks", async (t) => {
 
 Deno.test("logBytes", async (t) => {
   await t.step("correct byte count", () => {
-    const node = createTaskNode("Test");
+    const node = createFoldNode("Test");
     appendLog(node, "hello"); // 5
     appendLog(node, "world!"); // 6
     appendLog(node, ""); // 0
@@ -448,7 +448,7 @@ Deno.test("logBytes", async (t) => {
   });
 
   await t.step("zero for empty log", () => {
-    const node = createTaskNode("Test");
+    const node = createFoldNode("Test");
     assertEquals(logBytes(node), 0);
   });
 });

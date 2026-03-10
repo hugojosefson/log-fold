@@ -4,9 +4,9 @@ import { formatDuration } from "../format.ts";
 import {
   ancestorChain,
   durationMillis,
-  type TaskNode,
+  type FoldNode,
   walkTree,
-} from "../task-node.ts";
+} from "../fold-node.ts";
 import { computeFrame, type Frame } from "./compute-frame.ts";
 import { dumpNodeLogs } from "./dump-node-logs.ts";
 import type { Renderer } from "./renderer.ts";
@@ -17,10 +17,10 @@ export function createTtyRenderer(
   tickInterval = 150,
 ): Renderer {
   let stopped = false;
-  let root: TaskNode | undefined;
+  let root: FoldNode | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
   let previousLineCount = 0;
-  const displayCounts = new WeakMap<TaskNode, number>();
+  const displayCounts = new WeakMap<FoldNode, number>();
 
   function render(): void {
     if (!root || stopped) {
@@ -65,16 +65,16 @@ export function createTtyRenderer(
   }
 
   return {
-    onTaskStart(_node: TaskNode): void {
+    onFoldStart(_node: FoldNode): void {
       // TtyRenderer ignores — reads tree on tick
     },
-    onTaskEnd(_node: TaskNode): void {
+    onFoldEnd(_node: FoldNode): void {
       // TtyRenderer ignores — reads tree on tick
     },
-    onLog(_node: TaskNode, _line: string): void {
+    onLog(_node: FoldNode, _line: string): void {
       // TtyRenderer ignores — reads tree on tick
     },
-    start(rootNode: TaskNode): void {
+    start(rootNode: FoldNode): void {
       if (stopped) {
         return;
       }
@@ -123,8 +123,8 @@ function writeFrame(
 }
 
 /** Find leaf failures (failed nodes with no failed children). */
-function findLeafFailures(root: TaskNode): TaskNode[] {
-  const leaves: TaskNode[] = [];
+function findLeafFailures(root: FoldNode): FoldNode[] {
+  const leaves: FoldNode[] = [];
   for (const { node } of walkTree(root)) {
     if (node.status !== "fail") {
       continue;
@@ -139,7 +139,7 @@ function findLeafFailures(root: TaskNode): TaskNode[] {
 
 /** Dump full logs for leaf failures. */
 function dumpFailedLeafLogs(
-  root: TaskNode,
+  root: FoldNode,
   output: WriteStream,
   _termWidth: number,
 ): void {
@@ -147,7 +147,7 @@ function dumpFailedLeafLogs(
   for (const node of failures) {
     // Ancestor chain path header
     const chain = ancestorChain(node);
-    const pathParts = chain.map((n) => n.title ?? "<unnamed task>");
+    const pathParts = chain.map((n) => n.title ?? "<unnamed fold>");
     const header = `--- Failed: ${pathParts.join(" > ")} ---`;
     output.write("\n" + header + "\n");
     dumpNodeLogs(node, output);

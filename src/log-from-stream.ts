@@ -19,7 +19,7 @@ export type LogFromStreamInput =
   | AsyncIterable<string>;
 
 /**
- * Pipe one or more streams into the current task's log.
+ * Pipe one or more streams into the current fold's log.
  * Reads all streams concurrently; lines go to log() in event-loop arrival order.
  *
  * Collects lines locally (not from node.logLines) so that concurrent log()

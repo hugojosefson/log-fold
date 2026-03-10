@@ -1,9 +1,9 @@
 #!/usr/bin/env -S deno run --allow-run=find,npm --allow-net=example.com --allow-env
-import { log, logFromStream, logTask } from "../mod.ts";
+import { log, logFold, logFromStream } from "../mod.ts";
 import { spawn } from "node:child_process";
 
 // Node.js child_process
-await logTask("My process", async () => {
+await logFold("My process", async () => {
   const child = spawn("find", [".", "-type", "f"]);
   const _output = await logFromStream(child);
 });
@@ -11,7 +11,7 @@ await logTask("My process", async () => {
 if ("Deno" in globalThis) {
   // Deno.Command
   try {
-    await logTask("Install npm deps", async () => {
+    await logFold("Install npm deps", async () => {
       log("Create custom child process");
       const child = new Deno.Command("npm", {
         args: ["install"],
@@ -19,11 +19,11 @@ if ("Deno" in globalThis) {
         stderr: "piped",
       }).spawn();
 
-      await logTask("Pipe its output to the log", async () => {
+      await logFold("Pipe its output to the log", async () => {
         await logFromStream(child);
       });
 
-      await logTask("Wait for custom process to end", async () => {
+      await logFold("Wait for custom process to end", async () => {
         const status = await child.status;
         if (!status.success) {
           throw new Error(JSON.stringify(status));
@@ -37,7 +37,7 @@ if ("Deno" in globalThis) {
   }
 }
 // Single ReadableStream (e.g. fetch response)
-await logTask("Fetch logs", async () => {
+await logFold("Fetch logs", async () => {
   const response = await fetch("https://example.com/logs");
   await logFromStream(response.body!);
 });

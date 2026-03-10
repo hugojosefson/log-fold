@@ -1,5 +1,5 @@
 import { spawn, type SpawnOptions } from "node:child_process";
-import { logTask, setCurrentTaskWarning } from "./context.ts";
+import { logFold, setCurrentFoldWarning } from "./context.ts";
 import { logFromStream } from "./log-from-stream.ts";
 
 export type CommandArray = (string | number | boolean)[];
@@ -8,9 +8,9 @@ export type CommandArray = (string | number | boolean)[];
 export type RunCommandOptions = Omit<SpawnOptions, "stdio"> & {
   /**
    * Behavior on non-zero exit code. Default: true.
-   * - true: throw an Error (task fails via the enclosing logTask catch)
-   * - "warn": don't throw, set the task to warning status
-   * - false: don't throw, task stays success
+   * - true: throw an Error (fold fails via the enclosing logFold catch)
+   * - "warn": don't throw, set the fold to warning status
+   * - false: don't throw, fold stays success
    */
   throwOnError?: boolean | "warn";
 };
@@ -26,8 +26,8 @@ export type RunCommandResult = {
 };
 
 /**
- * Run a command as a sub-task, piping stdout+stderr to the task's log.
- * Auto-nests under the current task context (via AsyncLocalStorage).
+ * Run a command in a nested fold, piping stdout+stderr to the fold's log.
+ * Auto-nests under the current fold context (via AsyncLocalStorage).
  *
  * Stdin is always "ignore". Commands needing stdin should use
  * spawn() + logFromStream() directly.
@@ -54,7 +54,7 @@ export function runCommand(
   );
   const { throwOnError = true, ...spawnOptions } = options ?? {};
 
-  return logTask<RunCommandResult>(title, async () => {
+  return logFold<RunCommandResult>(title, async () => {
     const child = spawn(`${command[0]}`, command.slice(1).map((c) => `${c}`), {
       ...spawnOptions,
       stdio: ["ignore", "pipe", "pipe"],
@@ -80,7 +80,7 @@ export function runCommand(
         throw new Error(`Command failed with exit code ${code}`);
       }
       if (throwOnError === "warn") {
-        setCurrentTaskWarning();
+        setCurrentFoldWarning();
       }
     }
 

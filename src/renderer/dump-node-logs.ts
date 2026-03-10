@@ -1,7 +1,7 @@
-import type { TaskNode } from "../task-node.ts";
+import type { FoldNode } from "../fold-node.ts";
 import type { WriteStreamLike } from "./write-stream-like.ts";
 
-export function dumpNodeLogs(node: TaskNode, output: WriteStreamLike): void {
+export function dumpNodeLogs(node: FoldNode, output: WriteStreamLike): void {
   // Log lines through composedFlatMap, indented with 4 spaces
   for (const rawLine of node.logLines) {
     const mapped = node.composedFlatMap(rawLine);

@@ -7,7 +7,7 @@
     ".": "./mod.ts",
     "./run-command": "./src/run-command.ts",
     "./example-basic": "./readme/example-basic.ts",
-    "./example-concurrent-tasks": "./readme/example-concurrent-tasks.ts",
+    "./example-concurrent-folds": "./readme/example-concurrent-folds.ts",
     "./example-custom-options": "./readme/example-custom-options.ts",
     "./example-filtering-mapping": "./readme/example-filtering-mapping.ts",
     "./example-stream-piping": "./readme/example-stream-piping.ts",

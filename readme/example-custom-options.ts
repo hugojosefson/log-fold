@@ -1,8 +1,8 @@
 #!/usr/bin/env -S deno run
-import { log, logTask } from "../mod.ts";
+import { log, logFold } from "../mod.ts";
 
-await logTask("Deploy", { tailLines: 10, mode: "plain" }, async () => {
-  await logTask("Upload assets", () => {
+await logFold("Deploy", { tailLines: 10, mode: "plain" }, async () => {
+  await logFold("Upload assets", () => {
     log("uploading...");
   });
 });

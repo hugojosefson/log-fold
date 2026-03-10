@@ -1,9 +1,9 @@
 // AsyncLocalStorage convenience functions (primary API)
-export { log, logTask } from "./src/context.ts";
+export { log, logFold } from "./src/context.ts";
 export {
-  setCurrentTaskSkipped,
-  setCurrentTaskTitle,
-  setCurrentTaskWarning,
+  setCurrentFoldSkipped,
+  setCurrentFoldTitle,
+  setCurrentFoldWarning,
 } from "./src/context.ts";
 
 // Stream piping
@@ -16,5 +16,5 @@ export type {
 
 // Types
 export type { SessionOptions } from "./src/session.ts";
-export type { Spinner, TaskOptions } from "./src/task-node.ts";
-export type { TaskNode, TaskStatus } from "./src/task-node.ts";
+export type { FoldOptions, Spinner } from "./src/fold-node.ts";
+export type { FoldNode, FoldStatus } from "./src/fold-node.ts";
