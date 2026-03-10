@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file. See
 [fork-version](https://github.com/eglavin/fork-version) for commit guidelines.
 
+## 0.1.0 (2026-03-10)
+
+### ⚠ BREAKING CHANGES
+
+- `import { runCommand } from "@hugojosefson/log-fold/run-command"` no longer
+  works. Use `import { runCommand } from "@hugojosefson/log-fold"`.
+
+### Features
+
+- move runCommand into the default export
+  ([7dea734](https://github.com/hugojosefson/log-fold/commit/7dea73464471d154d5dbcbae2ac6200f648340d4)),
+  closes [#20](https://github.com/hugojosefson/log-fold/issues/20)
+
 ## 0.0.17 (2026-03-10)
 
 ### Other Changes
